@@ -11,6 +11,10 @@ repository = "https://github.com/pknego/ultima_rings"
 
 [dev-dependencies]
 criterion = "0.5"
+crossbeam-channel = "0.5"
+flume = "0.11"
+kanal = "0.1"
+rtrb = "0.3"
 
 [target.'cfg(loom)'.dependencies]
 loom = "0.7"

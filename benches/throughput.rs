@@ -1,1 +1,399 @@
-fn main() {}
+//! Regression-guard benches (single machine, indicative only — the
+//! cross-language rig lives in hi-perf-cmp). Persistent producer threads,
+//! barrier-released batches, wall-clock per batch.
+
+use std::sync::{Arc, Barrier};
+use std::thread;
+use std::time::Instant;
+
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use ultima_rings::{TryRecvError, TrySendError, WaitStrategy, mpsc, spsc};
+
+const BATCH: u64 = 100_000;
+
+fn spsc_throughput(c: &mut Criterion) {
+    let mut g = c.benchmark_group("spsc");
+    g.throughput(Throughput::Elements(BATCH));
+    g.bench_function("busy_spin_pipelined", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (mut tx, mut rx) = spsc::channel::<u64>(1024, WaitStrategy::BusySpin);
+                let consumer = thread::spawn(move || {
+                    let mut got = 0u64;
+                    while got < BATCH {
+                        got += rx.drain(usize::MAX, |_| {}) as u64;
+                    }
+                });
+                let t = Instant::now();
+                for i in 0..BATCH {
+                    let mut v = i;
+                    loop {
+                        match tx.try_send(v) {
+                            Ok(()) => break,
+                            Err(TrySendError::Full(b)) => {
+                                v = b;
+                                std::hint::spin_loop();
+                            }
+                            Err(TrySendError::Disconnected(_)) => unreachable!(),
+                        }
+                    }
+                }
+                consumer.join().unwrap();
+                total += t.elapsed();
+            }
+            total
+        })
+    });
+    g.finish();
+}
+
+fn mpsc_throughput(c: &mut Criterion) {
+    let mut g = c.benchmark_group("mpsc");
+    g.throughput(Throughput::Elements(BATCH));
+    g.bench_function("busy_spin_2_producers", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (tx, mut rx) = mpsc::channel::<u64>(1024, WaitStrategy::BusySpin);
+                let barrier = Arc::new(Barrier::new(3));
+                let mut handles = Vec::new();
+                for _ in 0..2 {
+                    let mut tx = tx.clone();
+                    let barrier = Arc::clone(&barrier);
+                    handles.push(thread::spawn(move || {
+                        barrier.wait();
+                        for i in 0..BATCH / 2 {
+                            let mut v = i;
+                            loop {
+                                match tx.try_send(v) {
+                                    Ok(()) => break,
+                                    Err(TrySendError::Full(b)) => {
+                                        v = b;
+                                        std::hint::spin_loop();
+                                    }
+                                    Err(TrySendError::Disconnected(_)) => return,
+                                }
+                            }
+                        }
+                    }));
+                }
+                drop(tx);
+                barrier.wait();
+                let t = Instant::now();
+                let mut got = 0u64;
+                loop {
+                    match rx.try_recv() {
+                        Ok(_) => got += 1,
+                        Err(TryRecvError::Empty) => std::hint::spin_loop(),
+                        Err(TryRecvError::Disconnected) => break,
+                    }
+                    if got == BATCH {
+                        break;
+                    }
+                }
+                total += t.elapsed();
+                for h in handles {
+                    h.join().unwrap();
+                }
+            }
+            total
+        })
+    });
+    g.finish();
+}
+
+criterion_group!(benches, spsc_throughput, mpsc_throughput);
+
+// ---------------------------------------------------------------------------
+// Bake-off: same two workloads (pipelined SPSC 100k through cap-1024;
+// 2-producer MPSC 100k through cap-1024) run against the ecosystem's
+// idiomatic non-blocking APIs. Bench-only — these crates never appear in
+// [dependencies]. This is the standing honesty check for the exit-ramp gate:
+// BusySpin >= 2x crossbeam-channel throughput, Park-mode parity, at
+// uc2-shaped workloads (see task-9 report for the verdict).
+// ---------------------------------------------------------------------------
+
+fn bakeoff_spsc(c: &mut Criterion) {
+    let mut g = c.benchmark_group("bakeoff_spsc");
+    g.throughput(Throughput::Elements(BATCH));
+    g.bench_function("crossbeam", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (tx, rx) = crossbeam_channel::bounded::<u64>(1024);
+                let consumer = thread::spawn(move || {
+                    let mut got = 0u64;
+                    while got < BATCH {
+                        if rx.try_recv().is_ok() {
+                            got += 1;
+                        } else {
+                            std::hint::spin_loop();
+                        }
+                    }
+                });
+                let t = Instant::now();
+                for i in 0..BATCH {
+                    let mut v = i;
+                    while let Err(crossbeam_channel::TrySendError::Full(b)) = tx.try_send(v) {
+                        v = b;
+                        std::hint::spin_loop();
+                    }
+                }
+                consumer.join().unwrap();
+                total += t.elapsed();
+            }
+            total
+        })
+    });
+    g.bench_function("rtrb", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (mut tx, mut rx) = rtrb::RingBuffer::<u64>::new(1024);
+                let consumer = thread::spawn(move || {
+                    let mut got = 0u64;
+                    while got < BATCH {
+                        if rx.pop().is_ok() {
+                            got += 1;
+                        } else {
+                            std::hint::spin_loop();
+                        }
+                    }
+                });
+                let t = Instant::now();
+                for i in 0..BATCH {
+                    let mut v = i;
+                    while let Err(rtrb::PushError::Full(b)) = tx.push(v) {
+                        v = b;
+                        std::hint::spin_loop();
+                    }
+                }
+                consumer.join().unwrap();
+                total += t.elapsed();
+            }
+            total
+        })
+    });
+    g.bench_function("flume", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (tx, rx) = flume::bounded::<u64>(1024);
+                let consumer = thread::spawn(move || {
+                    let mut got = 0u64;
+                    while got < BATCH {
+                        if rx.try_recv().is_ok() {
+                            got += 1;
+                        } else {
+                            std::hint::spin_loop();
+                        }
+                    }
+                });
+                let t = Instant::now();
+                for i in 0..BATCH {
+                    let mut v = i;
+                    while let Err(flume::TrySendError::Full(b)) = tx.try_send(v) {
+                        v = b;
+                        std::hint::spin_loop();
+                    }
+                }
+                consumer.join().unwrap();
+                total += t.elapsed();
+            }
+            total
+        })
+    });
+    g.bench_function("kanal", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (tx, rx) = kanal::bounded::<u64>(1024);
+                let consumer = thread::spawn(move || {
+                    let mut got = 0u64;
+                    while got < BATCH {
+                        match rx.try_recv() {
+                            Ok(Some(_)) => got += 1,
+                            Ok(None) => std::hint::spin_loop(),
+                            Err(_) => unreachable!(),
+                        }
+                    }
+                });
+                let t = Instant::now();
+                for i in 0..BATCH {
+                    let v = i;
+                    // try_send drops `v` on a full/closed channel, but u64 is
+                    // Copy so re-sending the same value on retry is fine.
+                    loop {
+                        match tx.try_send(v) {
+                            Ok(true) => break,
+                            Ok(false) => std::hint::spin_loop(),
+                            Err(_) => unreachable!(),
+                        }
+                    }
+                }
+                consumer.join().unwrap();
+                total += t.elapsed();
+            }
+            total
+        })
+    });
+    g.finish();
+}
+
+fn bakeoff_mpsc(c: &mut Criterion) {
+    let mut g = c.benchmark_group("bakeoff_mpsc");
+    g.throughput(Throughput::Elements(BATCH));
+    g.bench_function("crossbeam", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (tx, rx) = crossbeam_channel::bounded::<u64>(1024);
+                let barrier = Arc::new(Barrier::new(3));
+                let mut handles = Vec::new();
+                for _ in 0..2 {
+                    let tx = tx.clone();
+                    let barrier = Arc::clone(&barrier);
+                    handles.push(thread::spawn(move || {
+                        barrier.wait();
+                        for i in 0..BATCH / 2 {
+                            let mut v = i;
+                            loop {
+                                match tx.try_send(v) {
+                                    Ok(()) => break,
+                                    Err(crossbeam_channel::TrySendError::Full(b)) => {
+                                        v = b;
+                                        std::hint::spin_loop();
+                                    }
+                                    Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }));
+                }
+                drop(tx);
+                barrier.wait();
+                let t = Instant::now();
+                let mut got = 0u64;
+                loop {
+                    match rx.try_recv() {
+                        Ok(_) => got += 1,
+                        Err(crossbeam_channel::TryRecvError::Empty) => std::hint::spin_loop(),
+                        Err(crossbeam_channel::TryRecvError::Disconnected) => break,
+                    }
+                    if got == BATCH {
+                        break;
+                    }
+                }
+                total += t.elapsed();
+                for h in handles {
+                    h.join().unwrap();
+                }
+            }
+            total
+        })
+    });
+    g.bench_function("flume", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (tx, rx) = flume::bounded::<u64>(1024);
+                let barrier = Arc::new(Barrier::new(3));
+                let mut handles = Vec::new();
+                for _ in 0..2 {
+                    let tx = tx.clone();
+                    let barrier = Arc::clone(&barrier);
+                    handles.push(thread::spawn(move || {
+                        barrier.wait();
+                        for i in 0..BATCH / 2 {
+                            let mut v = i;
+                            loop {
+                                match tx.try_send(v) {
+                                    Ok(()) => break,
+                                    Err(flume::TrySendError::Full(b)) => {
+                                        v = b;
+                                        std::hint::spin_loop();
+                                    }
+                                    Err(flume::TrySendError::Disconnected(_)) => return,
+                                }
+                            }
+                        }
+                    }));
+                }
+                drop(tx);
+                barrier.wait();
+                let t = Instant::now();
+                let mut got = 0u64;
+                loop {
+                    match rx.try_recv() {
+                        Ok(_) => got += 1,
+                        Err(flume::TryRecvError::Empty) => std::hint::spin_loop(),
+                        Err(flume::TryRecvError::Disconnected) => break,
+                    }
+                    if got == BATCH {
+                        break;
+                    }
+                }
+                total += t.elapsed();
+                for h in handles {
+                    h.join().unwrap();
+                }
+            }
+            total
+        })
+    });
+    g.bench_function("kanal", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (tx, rx) = kanal::bounded::<u64>(1024);
+                let barrier = Arc::new(Barrier::new(3));
+                let mut handles = Vec::new();
+                for _ in 0..2 {
+                    let tx = tx.clone();
+                    let barrier = Arc::clone(&barrier);
+                    handles.push(thread::spawn(move || {
+                        barrier.wait();
+                        for i in 0..BATCH / 2 {
+                            let v = i;
+                            loop {
+                                match tx.try_send(v) {
+                                    Ok(true) => break,
+                                    Ok(false) => std::hint::spin_loop(),
+                                    Err(_) => return,
+                                }
+                            }
+                        }
+                    }));
+                }
+                drop(tx);
+                barrier.wait();
+                let t = Instant::now();
+                let mut got = 0u64;
+                loop {
+                    match rx.try_recv() {
+                        Ok(Some(_)) => {
+                            got += 1;
+                            if got == BATCH {
+                                break;
+                            }
+                        }
+                        Ok(None) => std::hint::spin_loop(),
+                        Err(_) => break,
+                    }
+                }
+                total += t.elapsed();
+                for h in handles {
+                    h.join().unwrap();
+                }
+            }
+            total
+        })
+    });
+    g.finish();
+}
+
+criterion_group!(bakeoff, bakeoff_spsc, bakeoff_mpsc);
+criterion_main!(benches, bakeoff);
