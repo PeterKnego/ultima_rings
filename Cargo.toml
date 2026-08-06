@@ -1,0 +1,23 @@
+[package]
+name = "ultima_rings"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+authors = ["Peter Knego <peter@knego.net>"]
+description = "Bounded lock-free SPSC/MPSC rings with pluggable wait strategies"
+repository = "https://github.com/pknego/ultima_rings"
+
+[dependencies]
+
+[dev-dependencies]
+criterion = "0.5"
+
+[target.'cfg(loom)'.dev-dependencies]
+loom = "0.7"
+
+[[bench]]
+name = "throughput"
+harness = false
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }
