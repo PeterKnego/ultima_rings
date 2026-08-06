@@ -145,6 +145,43 @@ impl<T: Send> Sender<T> {
         }
         Ok(())
     }
+
+    /// Push, blocking per the wait strategy while the ring is full. Because
+    /// the claim is bounded-CAS, a blocked sender holds no sequence.
+    pub fn send(&mut self, v: T) -> Result<(), crate::SendError<T>> {
+        use crate::wait::Idle;
+        let mut v = v;
+        let mut idle = Idle::new();
+        loop {
+            match self.try_send(v) {
+                Ok(()) => return Ok(()),
+                Err(TrySendError::Disconnected(back)) => return Err(crate::SendError(back)),
+                Err(TrySendError::Full(back)) => {
+                    v = back;
+                    let sh = &*self.shared;
+                    match sh.strategy {
+                        WaitStrategy::BusySpin => std::hint::spin_loop(),
+                        WaitStrategy::Backoff => idle.idle(),
+                        WaitStrategy::Park => {
+                            sh.prod_waiters.prepare_wait();
+                            crate::atomic::fence(Ordering::SeqCst);
+                            let claim = sh.claim.0.load(Ordering::Relaxed);
+                            let head = sh.head.0.load(Ordering::Acquire);
+                            if claim < head.saturating_add(sh.cap)
+                                || sh.rx_dropped.load(Ordering::Acquire)
+                            {
+                                // Space appeared or disconnected: skip the
+                                // park; our registration is consumed by the
+                                // next wake_all as a harmless spurious unpark.
+                            } else {
+                                sh.prod_waiters.park();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl<T: Send> Clone for Sender<T> {
@@ -184,6 +221,36 @@ impl<T: Send> Receiver<T> {
         sh.head.0.store(self.head, Ordering::Release);
         self.wake_producers();
         Ok(v)
+    }
+
+    /// Pop, blocking per the wait strategy while the ring is empty.
+    pub fn recv(&mut self) -> Result<T, crate::RecvError> {
+        use crate::wait::Idle;
+        let mut idle = Idle::new();
+        loop {
+            match self.try_recv() {
+                Ok(v) => return Ok(v),
+                Err(TryRecvError::Disconnected) => return Err(crate::RecvError),
+                Err(TryRecvError::Empty) => {
+                    let sh = &*self.shared;
+                    match sh.strategy {
+                        WaitStrategy::BusySpin => std::hint::spin_loop(),
+                        WaitStrategy::Backoff => idle.idle(),
+                        WaitStrategy::Park => {
+                            sh.consumer_parker.prepare_park();
+                            crate::atomic::fence(Ordering::SeqCst);
+                            if self.slot_published(self.head)
+                                || sh.senders.load(Ordering::Acquire) == 0
+                            {
+                                sh.consumer_parker.cancel();
+                            } else {
+                                sh.consumer_parker.park();
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Consume up to `max` items of the contiguous published prefix,

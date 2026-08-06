@@ -74,14 +74,12 @@ mod imp {
 
         /// Register the current thread. Caller MUST fence(SeqCst) and
         /// re-check before `park`.
-        #[allow(dead_code)] // used in Task 5
         pub(crate) fn prepare_wait(&self) {
             self.list.lock().unwrap().push(std::thread::current());
             self.waiting.store(true, Ordering::Relaxed);
         }
 
         /// Block until woken (or spuriously). Always re-check after return.
-        #[allow(dead_code)] // used in Task 5
         pub(crate) fn park(&self) {
             std::thread::park();
         }
