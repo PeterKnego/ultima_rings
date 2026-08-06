@@ -6,6 +6,7 @@
 //! See `docs/design.md` for the memory-ordering invariants.
 
 mod atomic;
+mod notify;
 pub mod spsc;
 mod wait;
 

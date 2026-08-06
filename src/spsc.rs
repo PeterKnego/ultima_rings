@@ -25,6 +25,8 @@ pub(crate) struct Shared<T> {
     pub(crate) disconnected: AtomicBool,
     #[allow(dead_code)] // used in Task 3
     pub(crate) strategy: WaitStrategy,
+    pub(crate) consumer_parker: crate::notify::Parker,
+    pub(crate) producer_parker: crate::notify::Parker,
 }
 
 // SAFETY: the single-producer/single-consumer discipline (enforced by the
@@ -62,6 +64,8 @@ pub fn channel<T: Send>(cap: usize, strategy: WaitStrategy) -> (Sender<T>, Recei
         head: CachePadded(AtomicUsize::new(0)),
         disconnected: AtomicBool::new(false),
         strategy,
+        consumer_parker: crate::notify::Parker::new(),
+        producer_parker: crate::notify::Parker::new(),
     });
     (
         Sender {
@@ -113,7 +117,44 @@ impl<T: Send> Sender<T> {
         self.tail += 1;
         // Release publishes the slot write above.
         sh.tail.0.store(self.tail, Ordering::Release);
+        if sh.strategy == WaitStrategy::Park {
+            crate::atomic::fence(Ordering::SeqCst);
+            sh.consumer_parker.wake();
+        }
         Ok(())
+    }
+
+    /// Push, blocking per the channel's wait strategy while the ring is full.
+    /// Fails only when the receiver disconnects, returning the value.
+    pub fn send(&mut self, v: T) -> Result<(), crate::SendError<T>> {
+        use crate::wait::Idle;
+        let mut v = v;
+        let mut idle = Idle::new();
+        loop {
+            match self.try_send(v) {
+                Ok(()) => return Ok(()),
+                Err(TrySendError::Disconnected(back)) => return Err(crate::SendError(back)),
+                Err(TrySendError::Full(back)) => {
+                    v = back;
+                    let sh = &*self.shared;
+                    match sh.strategy {
+                        WaitStrategy::BusySpin => std::hint::spin_loop(),
+                        WaitStrategy::Backoff => idle.idle(),
+                        WaitStrategy::Park => {
+                            sh.producer_parker.prepare_park();
+                            crate::atomic::fence(Ordering::SeqCst);
+                            let head = sh.head.0.load(Ordering::Acquire);
+                            if self.tail - head < sh.cap || sh.disconnected.load(Ordering::Acquire)
+                            {
+                                sh.producer_parker.cancel();
+                            } else {
+                                sh.producer_parker.park();
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -144,6 +185,10 @@ impl<T: Send> Receiver<T> {
         self.head += 1;
         // Release publishes the slot as reusable before exposing the new head.
         sh.head.0.store(self.head, Ordering::Release);
+        if sh.strategy == WaitStrategy::Park {
+            crate::atomic::fence(Ordering::SeqCst);
+            sh.producer_parker.wake();
+        }
         Ok(v)
     }
 
@@ -188,19 +233,60 @@ impl<T: Send> Receiver<T> {
             f(v);
         }
         drop(guard); // publish once (normal path); unwind publishes via Drop
+        if count > 0 && sh.strategy == WaitStrategy::Park {
+            crate::atomic::fence(Ordering::SeqCst);
+            sh.producer_parker.wake();
+        }
         count
+    }
+
+    /// Pop, blocking per the channel's wait strategy while the ring is empty.
+    /// Fails only when all senders are gone and the ring is drained.
+    pub fn recv(&mut self) -> Result<T, crate::RecvError> {
+        use crate::wait::Idle;
+        let mut idle = Idle::new();
+        loop {
+            match self.try_recv() {
+                Ok(v) => return Ok(v),
+                Err(TryRecvError::Disconnected) => return Err(crate::RecvError),
+                Err(TryRecvError::Empty) => {
+                    let sh = &*self.shared;
+                    match sh.strategy {
+                        WaitStrategy::BusySpin => std::hint::spin_loop(),
+                        WaitStrategy::Backoff => idle.idle(),
+                        WaitStrategy::Park => {
+                            sh.consumer_parker.prepare_park();
+                            crate::atomic::fence(Ordering::SeqCst);
+                            if sh.tail.0.load(Ordering::Acquire) != self.head
+                                || sh.disconnected.load(Ordering::Acquire)
+                            {
+                                sh.consumer_parker.cancel();
+                            } else {
+                                sh.consumer_parker.park();
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
 impl<T: Send> Drop for Sender<T> {
     fn drop(&mut self) {
         self.shared.disconnected.store(true, Ordering::Release);
+        crate::atomic::fence(Ordering::SeqCst);
+        self.shared.consumer_parker.wake();
+        self.shared.producer_parker.wake();
     }
 }
 
 impl<T: Send> Drop for Receiver<T> {
     fn drop(&mut self) {
         self.shared.disconnected.store(true, Ordering::Release);
+        crate::atomic::fence(Ordering::SeqCst);
+        self.shared.consumer_parker.wake();
+        self.shared.producer_parker.wake();
     }
 }
 
