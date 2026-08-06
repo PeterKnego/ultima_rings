@@ -6,6 +6,7 @@
 //! See `docs/design.md` for the memory-ordering invariants.
 
 mod atomic;
+pub mod spsc;
 mod wait;
 
 pub use wait::WaitStrategy;
@@ -73,7 +74,6 @@ impl<T: fmt::Debug> std::error::Error for SendError<T> {}
 impl std::error::Error for TryRecvError {}
 impl std::error::Error for RecvError {}
 
-#[allow(dead_code)] // removed in Task 2
 pub(crate) fn assert_cap(cap: usize) {
     assert!(
         cap > 0 && cap.is_power_of_two(),

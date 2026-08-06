@@ -2,13 +2,19 @@
 //! model-checked. Everything in the crate uses these re-exports, never
 //! `std::sync::atomic` directly.
 
-#![allow(unused_imports, dead_code)] // removed in Task 2
+#[cfg(not(loom))]
+pub(crate) use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 #[cfg(not(loom))]
-pub(crate) use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering, fence};
+#[allow(unused_imports)] // used in Task 3
+pub(crate) use std::sync::atomic::{AtomicI64, fence};
 
 #[cfg(loom)]
-pub(crate) use loom::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering, fence};
+pub(crate) use loom::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+#[cfg(loom)]
+#[allow(unused_imports)] // used in Task 3
+pub(crate) use loom::sync::atomic::{AtomicI64, fence};
 
 /// `UnsafeCell` with loom's closure API in both builds.
 #[cfg(not(loom))]

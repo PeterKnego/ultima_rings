@@ -1,8 +1,6 @@
 //! Wait strategies. `BusySpin` and `Backoff` are self-waking; `Park` blocks
 //! via the notify layer (`crate::notify`) and needs the Dekker wake protocol.
 
-#![allow(dead_code)] // removed in Task 2
-
 use std::time::Duration;
 
 /// How a blocked side (consumer-on-empty, producer-on-full) waits.
@@ -18,18 +16,24 @@ pub enum WaitStrategy {
     Park,
 }
 
+#[allow(dead_code)] // used in Task 3
 pub(crate) const SPINS: u32 = 10;
+#[allow(dead_code)] // used in Task 3
 pub(crate) const YIELDS: u32 = 20;
+#[allow(dead_code)] // used in Task 3
 const PARK_MIN: Duration = Duration::from_micros(1);
+#[allow(dead_code)] // used in Task 3
 const PARK_MAX: Duration = Duration::from_millis(1);
 
 /// Per-blocking-operation ladder state (the `backoff` bench cell's ladder).
 #[derive(Debug)]
+#[allow(dead_code)] // used in Task 3
 pub(crate) struct Idle {
     step: u32,
     park: Duration,
 }
 
+#[allow(dead_code)] // used in Task 3
 impl Idle {
     pub(crate) fn new() -> Self {
         Idle {
