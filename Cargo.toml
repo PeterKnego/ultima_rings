@@ -12,7 +12,7 @@ repository = "https://github.com/pknego/ultima_rings"
 [dev-dependencies]
 criterion = "0.5"
 
-[target.'cfg(loom)'.dev-dependencies]
+[target.'cfg(loom)'.dependencies]
 loom = "0.7"
 
 [[bench]]

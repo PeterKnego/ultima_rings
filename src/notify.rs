@@ -96,4 +96,89 @@ mod imp {
     }
 }
 
+#[cfg(loom)]
+mod imp {
+    //! Loom-modeled parking: Mutex+Condvar so loom explores wakeups and
+    //! detects deadlocks (a lost wakeup = all-threads-blocked = loom failure).
+    use crate::atomic::{AtomicBool, Ordering};
+    use loom::sync::{Condvar, Mutex};
+
+    #[derive(Debug)]
+    pub(crate) struct Parker {
+        parked: AtomicBool,
+        state: Mutex<bool>, // token
+        cv: Condvar,
+    }
+
+    impl Parker {
+        pub(crate) fn new() -> Self {
+            Parker {
+                parked: AtomicBool::new(false),
+                state: Mutex::new(false),
+                cv: Condvar::new(),
+            }
+        }
+        pub(crate) fn prepare_park(&self) {
+            self.parked.store(true, Ordering::Relaxed);
+        }
+        pub(crate) fn cancel(&self) {
+            self.parked.store(false, Ordering::Relaxed);
+        }
+        pub(crate) fn park(&self) {
+            let mut token = self.state.lock().unwrap();
+            while !*token {
+                token = self.cv.wait(token).unwrap();
+            }
+            *token = false;
+            drop(token);
+            self.parked.store(false, Ordering::Relaxed);
+        }
+        pub(crate) fn wake(&self) {
+            if self.parked.load(Ordering::Relaxed) {
+                self.parked.store(false, Ordering::Relaxed);
+                *self.state.lock().unwrap() = true;
+                self.cv.notify_one();
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub(crate) struct WaiterList {
+        waiting: AtomicBool,
+        // NOTE: named `epoch`, not `gen` (the brief's name) — `gen` is a
+        // reserved keyword as of edition 2024, and the keyword/identifier
+        // distinction is lexer-level (applies before `#[cfg(loom)]`
+        // stripping), so it breaks both the loom and non-loom builds.
+        // Same generation-counter protocol as the brief, renamed only.
+        epoch: Mutex<usize>,
+        cv: Condvar,
+    }
+
+    impl WaiterList {
+        pub(crate) fn new() -> Self {
+            WaiterList {
+                waiting: AtomicBool::new(false),
+                epoch: Mutex::new(0),
+                cv: Condvar::new(),
+            }
+        }
+        pub(crate) fn prepare_wait(&self) {
+            self.waiting.store(true, Ordering::Relaxed);
+        }
+        pub(crate) fn park(&self) {
+            let mut g = self.epoch.lock().unwrap();
+            let g0 = *g;
+            while *g == g0 && self.waiting.load(Ordering::Relaxed) {
+                g = self.cv.wait(g).unwrap();
+            }
+        }
+        pub(crate) fn wake_all(&self) {
+            if self.waiting.swap(false, Ordering::Relaxed) {
+                *self.epoch.lock().unwrap() += 1;
+                self.cv.notify_all();
+            }
+        }
+    }
+}
+
 pub(crate) use imp::{Parker, WaiterList};
