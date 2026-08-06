@@ -5,6 +5,8 @@
 //! close/disconnect semantics, and a loom/miri-verified concurrency core.
 //! See `docs/design.md` for the memory-ordering invariants.
 
+#![warn(missing_docs)]
+
 mod atomic;
 pub mod mpsc;
 mod notify;
@@ -15,7 +17,8 @@ pub use wait::WaitStrategy;
 
 use std::fmt;
 
-/// Error for [`try_send`]: the value is handed back in both cases.
+/// Error for `try_send` (both [`spsc::Sender::try_send`] and
+/// [`mpsc::Sender::try_send`]): the value is handed back in both cases.
 #[derive(Debug, PartialEq, Eq)]
 pub enum TrySendError<T> {
     /// The ring is full.
