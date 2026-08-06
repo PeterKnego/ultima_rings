@@ -150,24 +150,44 @@ impl<T: Send> Receiver<T> {
     /// Consume up to `max` currently-available items, advancing the shared
     /// head once at the end. Returns the count consumed.
     pub fn drain(&mut self, max: usize, mut f: impl FnMut(T)) -> usize {
+        struct PublishGuard<'a> {
+            head: &'a mut usize, // private cursor (already advanced per item)
+            shared: &'a AtomicUsize,
+            start: usize,
+        }
+        impl Drop for PublishGuard<'_> {
+            fn drop(&mut self) {
+                // Runs on normal exit AND unwind: the shared head always catches
+                // up to every item actually moved out of the ring, so Shared::Drop
+                // never re-drops a consumed slot (leak-not-double-drop policy).
+                if *self.head != self.start {
+                    self.shared.store(*self.head, Ordering::Release);
+                }
+            }
+        }
+
         let sh = &*self.shared;
         let mut count = 0usize;
+        let start = self.head;
+        let guard = PublishGuard {
+            head: &mut self.head,
+            shared: &sh.head.0,
+            start,
+        };
         while count < max {
-            if self.head == self.cached_tail {
+            if *guard.head == self.cached_tail {
                 self.cached_tail = sh.tail.0.load(Ordering::Acquire);
-                if self.head == self.cached_tail {
+                if *guard.head == self.cached_tail {
                     break;
                 }
             }
             // SAFETY: as in try_recv.
-            let v = sh.buf[self.head & sh.mask].with(|p| unsafe { (*p).assume_init_read() });
-            self.head += 1;
+            let v = sh.buf[*guard.head & sh.mask].with(|p| unsafe { (*p).assume_init_read() });
+            *guard.head += 1;
             count += 1;
             f(v);
         }
-        if count > 0 {
-            sh.head.0.store(self.head, Ordering::Release);
-        }
+        drop(guard); // publish once (normal path); unwind publishes via Drop
         count
     }
 }
