@@ -19,7 +19,8 @@
 - Disconnect semantics mirror std: all senders dropped → receiver drains remaining then `Disconnected`; receiver dropped → sends fail returning the value; published messages are never lost; every disconnect wakes all parked threads.
 - Park-mode wake protocol is Dekker: waiter does flag-store → `fence(SeqCst)` → re-check → park; waker does publish → `fence(SeqCst)` → flag-check → wake. The fence runs ONLY when `strategy == Park`.
 - `T: Send` is the only bound. Handles are `Send`, not `Sync`. Zero per-op allocation.
-- Zero runtime dependencies. `loom` and `criterion` are dev-deps only; loom code is behind `cfg(loom)` (RUSTFLAGS).
+- Zero runtime dependencies. `loom` and `criterion` are dev-deps only; loom code is behind `cfg(loom)` (RUSTFLAGS). Task 9 additionally adds `crossbeam-channel`, `flume`, `kanal`, and `rtrb` as **bench-only** dev-deps for the competitive bake-off — they must never appear in `[dependencies]`.
+- Ecosystem survey findings (docs/superpowers/research/2026-08-06-*.md) are binding context: publish indices BEFORE running drops (rtrb #185); leak-don't-double-drop on payload panic (crossbeam `panic_on_drop`); never rely on `Arc::strong_count` ordering (rtrb #114); no division on hot paths — mask only (heapless #650).
 - Keep the crate rustfmt- and clippy-clean (`cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`) at every commit.
 - Unsafe code carries a `// SAFETY:` comment stating the invariant it relies on.
 
@@ -78,7 +79,7 @@ harness = false
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }
 ```
 
-- [ ] **Step 2: Write `src/atomic.rs`** (the loom facade; the loom side is completed in Task 6 — the cfg structure lands now so all core code is written against it)
+- [ ] **Step 2: Write `src/atomic.rs`** (the loom facade; the loom side is completed in Task 7 — the cfg structure lands now so all core code is written against it)
 
 ```rust
 //! Facade over `std` vs `loom` sync primitives so the cores can be
@@ -661,7 +662,7 @@ git add -A && git commit -m "feat(spsc): generic SPSC core — try paths, drain,
 
 **Interfaces:**
 - Consumes: Task 2's `spsc` internals; Task 1's `wait::Idle`, `atomic::fence`.
-- Produces: `notify::Parker` — `new()`, `prepare_park(&self)`, `cancel(&self)`, `park(&self)`, `wake(&self)`; `notify::WaiterList` — `new()`, `prepare_wait(&self)`, `park(&self)`, `wake_all(&self)` (WaiterList is consumed by Task 5; its loom twin arrives in Task 6). `spsc::Sender::send(&mut self, v: T) -> Result<(), SendError<T>>`, `spsc::Receiver::recv(&mut self) -> Result<T, RecvError>`.
+- Produces: `notify::Parker` — `new()`, `prepare_park(&self)`, `cancel(&self)`, `park(&self)`, `wake(&self)`; `notify::WaiterList` — `new()`, `prepare_wait(&self)`, `park(&self)`, `wake_all(&self)` (WaiterList is consumed by Task 5; its loom twin arrives in Task 7). `spsc::Sender::send(&mut self, v: T) -> Result<(), SendError<T>>`, `spsc::Receiver::recv(&mut self) -> Result<T, RecvError>`.
 
 - [ ] **Step 1: Write the failing tests** — `tests/spsc_blocking.rs`
 
@@ -744,7 +745,7 @@ fn parked_send_wakes_on_disconnect_and_returns_value() {
 Run: `cargo test --test spsc_blocking`
 Expected: COMPILE ERROR — no method `send`/`recv`.
 
-- [ ] **Step 3: Implement `src/notify.rs`** (std side; the `cfg(loom)` twin is Task 6)
+- [ ] **Step 3: Implement `src/notify.rs`** (std side; the `cfg(loom)` twin is Task 7)
 
 ```rust
 //! The notify layer: all parking lives here, none in the lock-free cores.
@@ -1590,7 +1591,160 @@ git add -A && git commit -m "feat(mpsc): blocking send/recv with parker/waiter-l
 
 ---
 
-### Task 6: loom lane — modeled parker + the four models
+### Task 6: Ported close-semantics suite (crossbeam's corner cases)
+
+**Files:**
+- Create: `tests/close_semantics.rs`
+
+**Interfaces:**
+- Consumes: public API only. These are the disconnect/drop corner cases crossbeam-channel's test suite accumulated (see `docs/superpowers/research/2026-08-06-crossbeam-channel-survey.md`) — the cases a new channel crate typically gets wrong.
+
+- [ ] **Step 1: Write `tests/close_semantics.rs`**
+
+```rust
+//! Disconnect/drop corner cases ported from crossbeam-channel's array tests
+//! (see docs/superpowers/research/2026-08-06-crossbeam-channel-survey.md).
+#![cfg(not(loom))]
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread;
+use ultima_rings::{
+    RecvError, SendError, TryRecvError, TrySendError, WaitStrategy, mpsc, spsc,
+};
+
+/// crossbeam `try_recv_closed_with_data`: data survives the disconnect.
+#[test]
+fn try_recv_closed_with_data_spsc_and_mpsc() {
+    let (mut tx, mut rx) = spsc::channel::<u32>(4, WaitStrategy::BusySpin);
+    tx.try_send(1).unwrap();
+    drop(tx);
+    assert_eq!(rx.try_recv(), Ok(1));
+    assert_eq!(rx.try_recv(), Err(TryRecvError::Disconnected));
+
+    let (mut tx, mut rx) = mpsc::channel::<u32>(4, WaitStrategy::BusySpin);
+    tx.try_send(1).unwrap();
+    drop(tx);
+    assert_eq!(rx.try_recv(), Ok(1));
+    assert_eq!(rx.try_recv(), Err(TryRecvError::Disconnected));
+}
+
+/// crossbeam `drop_unreceived` / `drop_full`: values in a dropped ring are
+/// dropped exactly once, whether the ring was partly or completely full.
+#[test]
+fn drop_full_ring_drops_all_values_once() {
+    struct Counted(Arc<AtomicUsize>);
+    impl Drop for Counted {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    for produced in [1usize, 4, 8] {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let (mut tx, rx) = mpsc::channel::<Counted>(8, WaitStrategy::BusySpin);
+        for _ in 0..produced {
+            tx.try_send(Counted(Arc::clone(&drops))).unwrap();
+        }
+        drop(rx);
+        drop(tx);
+        assert_eq!(drops.load(Ordering::Relaxed), produced);
+    }
+}
+
+/// crossbeam `send_after_disconnect`: every send flavor fails and returns the
+/// value after the receiver is gone.
+#[test]
+fn send_after_disconnect_returns_value() {
+    let (mut tx, rx) = mpsc::channel::<String>(4, WaitStrategy::BusySpin);
+    drop(rx);
+    assert_eq!(
+        tx.try_send("t".into()),
+        Err(TrySendError::Disconnected("t".to_string()))
+    );
+    assert_eq!(tx.send("b".into()), Err(SendError("b".to_string())));
+}
+
+/// crossbeam `disconnect_wakes_receiver`, multi-producer variant: the LAST
+/// sender's drop (from a different thread each time) wakes a parked receiver.
+#[test]
+fn last_sender_drop_from_thread_wakes_parked_receiver() {
+    for _ in 0..20 {
+        let (tx, mut rx) = mpsc::channel::<u32>(4, WaitStrategy::Park);
+        let txs: Vec<_> = (0..3).map(|_| tx.clone()).collect();
+        drop(tx);
+        let consumer = thread::spawn(move || rx.recv());
+        let droppers: Vec<_> = txs
+            .into_iter()
+            .map(|t| thread::spawn(move || drop(t)))
+            .collect();
+        for d in droppers {
+            d.join().unwrap();
+        }
+        assert_eq!(consumer.join().unwrap(), Err(RecvError));
+    }
+}
+
+/// crossbeam `drops` fuzz: randomized produce/consume/close with exact
+/// drop accounting. Deterministic LCG, no rand dep.
+#[test]
+fn randomized_drop_accounting_fuzz() {
+    struct Counted(Arc<AtomicUsize>);
+    impl Drop for Counted {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    let mut seed = 0x9E3779B97F4A7C15u64;
+    let mut next = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    let rounds = if cfg!(miri) { 20 } else { 500 };
+    for _ in 0..rounds {
+        let produce = (next() % 40) as usize;
+        let consume_max = (next() % 40) as usize;
+        let drops = Arc::new(AtomicUsize::new(0));
+        let (mut tx, mut rx) = mpsc::channel::<Counted>(16, WaitStrategy::BusySpin);
+        let mut sent = 0usize;
+        for _ in 0..produce {
+            match tx.try_send(Counted(Arc::clone(&drops))) {
+                Ok(()) => sent += 1,
+                Err(TrySendError::Full(v)) => drop(v),
+                Err(TrySendError::Disconnected(_)) => unreachable!(),
+            }
+        }
+        let mut consumed = 0usize;
+        for _ in 0..consume_max.min(sent) {
+            if rx.try_recv().is_ok() {
+                consumed += 1;
+            }
+        }
+        let _ = consumed;
+        drop(tx);
+        drop(rx);
+        // Every constructed value dropped exactly once, regardless of path:
+        // rejected-full ones, consumed ones, and ring-drained ones.
+        assert_eq!(drops.load(Ordering::Relaxed), produce);
+    }
+}
+```
+
+- [ ] **Step 2: Run**
+
+Run: `cargo test --test close_semantics && cargo clippy --all-targets -- -D warnings && cargo fmt`
+Expected: all PASS. `last_sender_drop_from_thread_wakes_parked_receiver` is repeated 20× because it is a race probe — a hang here is a real wake bug.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add -A && git commit -m "test: close-semantics corner cases ported from crossbeam-channel"
+```
+
+---
+
+### Task 7: loom lane — modeled parker + five models
 
 **Files:**
 - Modify: `src/notify.rs` (add the `cfg(loom)` impl of `Parker`/`WaiterList`)
@@ -1599,6 +1753,8 @@ git add -A && git commit -m "feat(mpsc): blocking send/recv with parker/waiter-l
 **Interfaces:**
 - Consumes: everything; the `atomic.rs` facade already switches on `cfg(loom)`.
 - Produces: the loom verification lane: `RUSTFLAGS="--cfg loom" cargo test --test loom --release`.
+
+Loom practices adopted from thingbuf's harness (see the thingbuf survey report): tiny capacities, per-model preemption bound via `LOOM_MAX_PREEMPTIONS=2` when a model explodes, and `LOOM_LOG=trace LOOM_CHECKPOINT_FILE=...` for replaying a failing interleaving.
 
 - [ ] **Step 1: Add the loom twin to `src/notify.rs`** (below the `#[cfg(not(loom))] mod imp`, same `pub(crate) use imp::…` tail works for both)
 
@@ -1781,12 +1937,30 @@ fn loom_close_wakes_parked_consumer() {
         assert!(consumer.join().unwrap().is_err());
     });
 }
+
+/// (5) WaiterList path (the kanal "cancel races delivery" class): a sender
+/// parked on a full MPSC ring must be woken by BOTH possible events —
+/// consumer progress and receiver drop — under every interleaving.
+#[test]
+fn loom_full_parked_sender_vs_recv_and_rx_drop() {
+    loom::model(|| {
+        let (mut tx, mut rx) = mpsc::channel::<u64>(1, WaitStrategy::Park);
+        tx.try_send(0).unwrap(); // fill the 1-slot ring
+        let producer = thread::spawn(move || tx.send(1)); // parks on full
+        // Consumer frees a slot, then drops: the parked sender must either
+        // deliver (send returns Ok) or observe the disconnect (Err) — never
+        // hang. Loom's deadlock detection is the assertion.
+        let _ = rx.try_recv();
+        drop(rx);
+        let _ = producer.join().unwrap();
+    });
+}
 ```
 
 - [ ] **Step 3: Run the loom lane**
 
 Run: `RUSTFLAGS="--cfg loom" cargo test --test loom --release`
-Expected: all four models PASS (minutes, not hours — caps and counts are tiny). If loom reports a panic or deadlock, it prints the failing interleaving — fix the protocol, never shrink the model. Also confirm the normal lane still passes: `cargo test`.
+Expected: all five models PASS (minutes, not hours — caps and counts are tiny). If loom reports a panic or deadlock, it prints the failing interleaving (replay with `LOOM_LOG=trace`) — fix the protocol, never shrink the model. Also confirm the normal lane still passes: `cargo test`.
 
 - [ ] **Step 4: Commit**
 
@@ -1796,7 +1970,7 @@ git add -A && git commit -m "test(loom): modeled parker + spsc/mpsc/park/close m
 
 ---
 
-### Task 7: miri lane
+### Task 8: miri lane
 
 **Files:**
 - Modify (only if miri flags issues): `src/spsc.rs`, `src/mpsc.rs`, `src/atomic.rs`
@@ -1824,13 +1998,15 @@ git add -A && git commit -m "fix: miri findings on the unsafe slot surface"
 
 ---
 
-### Task 8: Criterion benches — regression guard
+### Task 9: Criterion benches — regression guard + competitive bake-off
 
 **Files:**
 - Create: `benches/throughput.rs`
+- Modify: `Cargo.toml` (bench-only dev-deps)
 
 **Interfaces:**
 - Consumes: public API only.
+- Purpose beyond regression-guarding: the bake-off is the standing honesty check against the ecosystem, with an explicit exit ramp — **if ultima_rings shows no clear advantage (BusySpin ≥2× crossbeam-channel throughput, Park-mode parity) at uc2-shaped workloads, flag an adoption discussion before any uc2 integration.** Record the numbers in the task report.
 
 - [ ] **Step 1: Write `benches/throughput.rs`**
 
@@ -1944,20 +2120,115 @@ criterion_group!(benches, spsc_throughput, mpsc_throughput);
 criterion_main!(benches);
 ```
 
-- [ ] **Step 2: Smoke-run**
+- [ ] **Step 2: Add the bake-off competitors**
 
-Run: `cargo bench -- --quick 2>&1 | tail -20`
-Expected: both benches complete with positive throughput; SPSC in the hundreds of M elem/s on this box, MPSC in the tens. Numbers are indicative only — do not tune against them here.
+Append to `Cargo.toml`'s `[dev-dependencies]` (bench-only — NEVER `[dependencies]`):
 
-- [ ] **Step 3: Commit**
+```toml
+crossbeam-channel = "0.5"
+flume = "0.11"
+kanal = "0.1"
+rtrb = "0.3"
+```
+
+Append to `benches/throughput.rs` a bake-off group running the SAME two workloads (pipelined SPSC 100k through cap-1024; 2-producer MPSC 100k through cap-1024) on each competitor, using each library's idiomatic non-blocking loop (`try_send`/`try_recv` or push/pop equivalents, spin on Full/Empty), same `iter_custom` wall-clock harness as Step 1:
+
+```rust
+fn bakeoff_spsc(c: &mut Criterion) {
+    let mut g = c.benchmark_group("bakeoff_spsc");
+    g.throughput(Throughput::Elements(BATCH));
+    g.bench_function("crossbeam", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (tx, rx) = crossbeam_channel::bounded::<u64>(1024);
+                let consumer = thread::spawn(move || {
+                    let mut got = 0u64;
+                    while got < BATCH {
+                        if rx.try_recv().is_ok() {
+                            got += 1;
+                        } else {
+                            std::hint::spin_loop();
+                        }
+                    }
+                });
+                let t = Instant::now();
+                for i in 0..BATCH {
+                    let mut v = i;
+                    while let Err(crossbeam_channel::TrySendError::Full(b)) = tx.try_send(v) {
+                        v = b;
+                        std::hint::spin_loop();
+                    }
+                }
+                consumer.join().unwrap();
+                total += t.elapsed();
+            }
+            total
+        })
+    });
+    g.bench_function("rtrb", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (mut tx, mut rx) = rtrb::RingBuffer::<u64>::new(1024);
+                let consumer = thread::spawn(move || {
+                    let mut got = 0u64;
+                    while got < BATCH {
+                        if rx.pop().is_ok() {
+                            got += 1;
+                        } else {
+                            std::hint::spin_loop();
+                        }
+                    }
+                });
+                let t = Instant::now();
+                for i in 0..BATCH {
+                    let mut v = i;
+                    while let Err(rtrb::PushError::Full(b)) = tx.push(v) {
+                        v = b;
+                        std::hint::spin_loop();
+                    }
+                }
+                consumer.join().unwrap();
+                total += t.elapsed();
+            }
+            total
+        })
+    });
+    // flume and kanal: identical harness shape via their bounded()/try_send/
+    // try_recv APIs (flume::bounded(1024); kanal::bounded(1024)), spinning on
+    // Full/Empty exactly as above.
+    g.finish();
+}
+
+fn bakeoff_mpsc(c: &mut Criterion) {
+    // Same 2-producer harness as mpsc_throughput (barrier release, halves of
+    // BATCH per producer, consumer counts to BATCH), instantiated for
+    // crossbeam_channel::bounded, flume::bounded, and kanal::bounded (all
+    // three Senders are Clone). rtrb is SPSC-only and is skipped here.
+    // Transcribe the mpsc_throughput body per competitor, swapping only the
+    // channel construction and the error enum paths.
+}
+
+criterion_group!(bakeoff, bakeoff_spsc, bakeoff_mpsc);
+```
+
+and change the bottom line to `criterion_main!(benches, bakeoff);`. Fill in the flume/kanal SPSC functions and the three `bakeoff_mpsc` competitor functions by instantiating the shown harness — the shape is fully specified above; only the constructor names and error-variant paths differ per library (check each crate's docs for exact `TrySendError`/`TryRecvError` variant names at the pinned versions).
+
+- [ ] **Step 3: Smoke-run + record the table**
+
+Run: `cargo bench -- --quick 2>&1 | tail -40`
+Expected: all benches complete with positive throughput; ultima_rings SPSC in the hundreds of M elem/s on this box, MPSC in the tens. Record the full comparison table in the task report and evaluate the exit-ramp gate above. Numbers are single-box indicative — the gate asks for a clear margin, not a precise one.
+
+- [ ] **Step 4: Commit**
 
 ```bash
-git add -A && git commit -m "bench: criterion throughput regression guards (spsc, mpsc)"
+git add -A && git commit -m "bench: criterion regression guards + ecosystem bake-off (crossbeam/flume/kanal/rtrb)"
 ```
 
 ---
 
-### Task 9: `docs/design.md` + README + rustdoc pass
+### Task 10: `docs/design.md` + README + rustdoc pass
 
 **Files:**
 - Create: `docs/design.md`, `README.md`
@@ -1973,6 +2244,9 @@ git add -A && git commit -m "bench: criterion throughput regression guards (spsc
 6. **Drop-drain.** SPSC `head..tail`; MPSC contiguous published prefix; why a claimed-but-unpublished hole (a sender that bailed on `Disconnected`) safely terminates the drain.
 7. **Deviations from the bench cells.** Bounded-CAS claim vs fetch_add (and what it buys); `&mask` vs `%`; what stayed byte-equivalent (the publish/consume edges).
 8. **Costs.** Park-mode's one SeqCst fence per operation on each side; Backoff's zero cross-side cost; the false-sharing reality of the interleaved availability array (with the measured AWS numbers).
+9. **Alternatives considered** (from the ecosystem survey, `docs/superpowers/research/`): Vyukov per-slot stamps and packed state words (crossbeam's array flavor; thingbuf's `Core` — and thingbuf's open #98/#100 as the caution), kanal's direct cross-stack transfer (fast, but structurally incompatible with a loom/miri-verifiable slots-own-everything design), flume's lock-based core (safe, pays a lock per op). One paragraph each: what it is, why not chosen.
+10. **Soundness pitfall checklist.** The kanal pitfall classes (stack-pointer escape, clone/split double-free, forget-vs-drop, aliasing on parked objects, non-repr(C) transmute, hand-written Send/Sync, cancel-races-delivery) plus rtrb's publish-before-drop rule (#185) and `Arc::strong_count` trap (#114), and heapless's division-regression class (#650) — each mapped to the ultima_rings mitigation (design property, test, or lane) that covers it.
+11. **Future layering note.** Async support would be an alternate waiter implementation in the notify layer (store a `Waker` instead of a `Thread`, à la flume's `Signal` trait) — no core changes; explicitly out of scope for v1.
 
 - [ ] **Step 2: Write `README.md`**: what it is (one paragraph, provenance from hi-perf-cmp), the API example below, the wait-strategy table with the guidance (BusySpin = latency at any CPU cost; Backoff = balanced; Park = idle-efficient), the measured numbers (AWS c6id.2xlarge, run `20260806T053918Z`: SPSC 387 M ops/s Rust pipelined, one-way handoff p50 ~200–300 ns; MPSC 2-producer 9.4 M ops/s, p50 277 ns) with the caveat that they are the bench-cell (u64, `%`-indexed, fetch_add) numbers, verification story (loom, miri, ARM CI, stress), license.
 
@@ -1998,7 +2272,7 @@ git add -A && git commit -m "docs: design.md (invariants + ordering arguments), 
 
 ---
 
-### Task 10: CI — x86, ARM, miri, loom lanes
+### Task 11: CI — x86, ARM, miri, loom lanes
 
 **Files:**
 - Create: `.github/workflows/ci.yml`
@@ -2067,4 +2341,4 @@ git add -A && git commit -m "ci: x86 + arm + loom + miri lanes"
 
 ## After the plan
 
-Merge `feat/v1` per the finishing-a-development-branch skill. Follow-ups already out of scope per spec: producer batch API, MPMC, async, Go/Java ports, uc2 integration (blocked on the pending `uc2_net` branch), crates.io publish.
+Merge `feat/v1` per the finishing-a-development-branch skill. Follow-ups already out of scope per spec: producer batch API, MPMC, async, Go/Java ports, uc2 integration (blocked on the pending `uc2_net` branch), crates.io publish. Survey-sourced v2 candidates recorded for later: rtrb-style chunk read/write API, thingbuf-style `send_ref` payload recycling (NetEvent buffer reuse), flume-style `send_deadline`/`recv_deadline`/`recv_timeout` variants, and a TSan stress lane complementing loom/miri (rtrb's practice).
