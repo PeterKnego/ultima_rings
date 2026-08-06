@@ -176,8 +176,9 @@ down):
 1. Publish the change (the slot write + the `Release` store of `tail`/`head`/`avail`, or
    the `Release` store of `disconnected`/`rx_dropped`).
 2. `fence(SeqCst)`.
-3. **Check the "is anyone parked" flag** (a `Relaxed` load inside `Parker::wake`/
-   `WaiterList::wake_all`) and unpark if so.
+3. **Check the "is anyone parked" flag** (`Parker::wake` does a `Relaxed` load;
+   `WaiterList::wake_all` does a `Relaxed` swap, an RMW whose read carries the same
+   guarantee) and unpark if so.
 
 **Why this can't lose a wakeup.** `SeqCst` fences participate in a single global total
 order shared by *all* `SeqCst` operations in the program. Consider the waiter's fence
@@ -372,7 +373,10 @@ crate's explicit "leak-not-double-drop" policy on the panic path, stated in the 
 directly above each `PublishGuard::drop` impl). Both `spsc.rs` and `mpsc.rs` implement
 this guard with the identical shape (private cursor reference + shared atomic reference +
 start snapshot); it is the single mechanism that makes `drain`'s panic-safety story
-consistent between the two rings.
+consistent between the two rings. Note: in `Park` mode, if `f` panics the wake-parked-producers
+step is skipped (the `head` publish via the guard still broadcasts via Release/Acquire ordering;
+a parked producer will wake on the subsequent normal operation or on receiver drop; v2 could
+move the wake into the guard to wake earlier).
 
 ## 7. Deviations from the bench cells
 
@@ -400,18 +404,25 @@ of why the MPSC bake-off number in the README trails `crossbeam-channel`'s class
 `fetch_add`-based design under heavy contention — an accepted v1 trade, not an oversight
 (see the README's numbers section and §8).
 
-**`& mask` instead of `%`.** Both rings index the physical buffer with `seq & (cap - 1)`
-rather than `seq % cap`, matching the bench cells' own indexing convention. Because `cap`
-is checked to be a power of two at construction (`assert_cap`), the two are numerically
-identical, but the mask form is guaranteed to compile to a single `AND` instruction
-regardless of whether the optimizer can see `cap` as compile-time-constant, whereas `%`
-can lower to a division instruction the moment the divisor's constant-ness is hidden from
-the compiler (e.g. behind a generic function boundary or a type-erased slice) — exactly
-the regression the `heapless` survey documents happening in that crate's own history
-(issue #650/#652: erasing a const-generic capacity silently reintroduced
-`__aeabi_uidivmod` calls in the hot path). `ultima_rings` never had a const-generic
-capacity to begin with (`cap` is a runtime `usize` from day one), so starting from a mask
-sidesteps that regression class structurally rather than needing heapless's later fix.
+**`& mask` instead of `%` for slot indexing.** Both rings index the physical buffer with
+`seq & (cap - 1)` rather than `seq % cap`, matching the bench cells' own indexing convention.
+Because `cap` is checked to be a power of two at construction (`assert_cap`), the two are
+numerically identical, but the mask form compiles to a single `AND` instruction, never a
+division, regardless of whether the optimizer can see `cap` as compile-time-constant — the
+same structurally-sound approach the `heapless` survey recommends (issue #650/#652:
+erasing a const-generic capacity can reintroduce `__aeabi_uidivmod` calls in the hot path).
+Slot indexing is therefore division-free by construction.
+
+**The availability-round division cost (`seq / cap` at runtime).** MPSC's per-slot availability
+array stores round numbers (`seq / cap`; see §1) to detect wrap-around without an ABA problem.
+This division is computed on the publish path (every `try_send`) and the consume path (the
+`slot_published` check in every `try_recv`/`drain`). The mask-based indexing avoids dividing
+the index itself, but not the round number — `seq / cap` executes as a runtime division
+instruction on both producer and consumer. This is a known, accepted v1 cost that contributes
+to the MPSC bake-off gap documented in the README (§8 below), not an oversight. The v2
+optimization lever is precomputed shifts: storing a cached `shift = log2(cap)` from
+construction and replacing `seq / cap` with `seq >> shift` (cheaper and loom/miri re-verifiable,
+since the shift is deterministic).
 
 **What stayed byte-equivalent.** The actual publish/consume edges — SPSC's `tail`
 Release/`head` Acquire pair, and MPSC's `avail[slot] = seq / cap` Release/Acquire
@@ -527,7 +538,7 @@ lane) that covers it.
 | Combinator/adapter surface as a distinct attack surface (kanal #63) | A convenience wrapper (stream/iterator adapter) over an already-sound core reintroduces a bug the core doesn't have | `drain`'s `PublishGuard` (§6) is exactly this class of concern pre-empted: a batch/adapter-shaped API (`drain(max, f)`, the closest thing this crate has to a combinator) is independently panic-safety-audited, not merely assumed sound because the single-item `try_recv` path is |
 | rtrb's publish-before-drop rule (issue #185, open upstream) | A chunk/batch commit drops consumed slots *before* advancing the published index, so a panicking `Drop` mid-batch leaves the index stale and the same slots get dropped again on the next read | `PublishGuard` (§6) advances the shared `head` to reflect exactly what was consumed **via its own `Drop` impl, which runs on the unwind path too** — the index update and the "how much was actually taken" bookkeeping can never desynchronize, whether `f` panics or not; this was designed in from `drain`'s introduction (Task 2/4), specifically to avoid reproducing rtrb's still-open bug |
 | `Arc::strong_count` trap (rtrb issue #114) | Relying on another type's undocumented/incidental synchronization behavior (here, `Arc::strong_count`'s ordering) for a correctness invariant, which broke when that behavior changed upstream | `ultima_rings` never inspects `Arc::strong_count`; disconnect/liveness tracking is entirely the crate's own explicit atomics (`disconnected`, `rx_dropped`, `senders`) with orderings documented in §2 and argued in §5 — no dependency on any other type's incidental guarantees |
-| heapless's division-regression class (issue #650) | Type-erasing a capacity that was compile-time-constant silently reintroduces a runtime division in the hot index-update path | Both rings index with `seq & (cap - 1)`, never `%` (§7) — `AND` cannot lower to a division regardless of whether the optimizer can see `cap`'s constant-ness, so this class of regression cannot occur here structurally, not just by current-code inspection |
+| heapless's division-regression class (issue #650) | Type-erasing a capacity that was compile-time-constant silently reintroduces a runtime division in the hot index-update path | Both rings' slot indexing uses `seq & (cap - 1)`, never `%` (§7) — the `AND` cannot lower to a division regardless of whether `cap` is compile-time-constant, so the *index* update path is structurally division-free. However, MPSC's availability-round computation (`seq / cap`) does execute as a runtime division on the hot publish/consume path (a known v1 cost, noted in §7); the v2 optimization is precomputed shifts. |
 
 ## 11. Future layering note
 

@@ -61,10 +61,9 @@ certified AWS measurement — that re-run has not happened yet.
 
 ### This crate's own bake-off (criterion, single 4-core dev box)
 
-`cargo bench` (see `benches/throughput.rs`, full run recorded in
-`.superpowers/sdd/2026-08-06-ultima-rings-v1/task-9-report.md`) measures `ultima_rings`
-`BusySpin` throughput head-to-head against `crossbeam-channel`, `flume`, `kanal`, and
-(SPSC-only) `rtrb`:
+`cargo bench` (see `benches/throughput.rs`, full results in [`docs/bench-results/2026-08-06-bakeoff.md`](docs/bench-results/2026-08-06-bakeoff.md))
+measures `ultima_rings` `BusySpin` throughput head-to-head against `crossbeam-channel`,
+`flume`, `kanal`, and (SPSC-only) `rtrb`:
 
 | Group | Competitor | Melem/s (mid) |
 |---|---|---:|
@@ -79,17 +78,19 @@ certified AWS measurement — that re-run has not happened yet.
 | MPSC (2 producers) | kanal | 5.3 |
 
 SPSC leads `crossbeam-channel` by **~15.5×** and lands at parity with `rtrb` (also a
-minimal-overhead, wait-strategy-free lock-free SPSC ring). **MPSC currently trails
-`crossbeam-channel`, at ~0.42× its throughput** — under this 2-producer/4-core contention
-shape, crossbeam's `fetch_add` claim with a colocated per-slot stamp+payload beats this
-crate's bounded-CAS claim over a separate availability array. This is an accepted,
-documented trade for v1, not an oversight: the bounded claim buys correctness properties
-`fetch_add` structurally cannot (`try_send` can report `Full` without claiming a slot, and
-a blocked producer holds no unpublished hole for the consumer to reason about — see
-`docs/design.md` §7) at the cost of a CAS-retry loop plus the availability array's per-slot
-false sharing (`docs/design.md` §8); a batched claim (reserving a contiguous run of
-sequences per CAS instead of one at a time) is the identified v2 lever to close this gap. A
-reference implementation does not hide a lost benchmark.
+minimal-overhead, wait-strategy-free lock-free SPSC ring); note that this crate's `drain`
+uses batched consumption while competitors single-pop, yet the single-pop `rtrb` result
+(626 Melem/s) is only 1% higher, so batching is not the headline's source. **MPSC currently
+trails `crossbeam-channel`, at ~0.42× its throughput** — under this 2-producer/4-core
+contention shape, crossbeam's `fetch_add` claim with a colocated per-slot stamp+payload
+beats this crate's bounded-CAS claim over a separate availability array. This is an
+accepted, documented trade for v1, not an oversight: the bounded claim buys correctness
+properties `fetch_add` structurally cannot (`try_send` can report `Full` without claiming
+a slot, and a blocked producer holds no unpublished hole for the consumer to reason about —
+see `docs/design.md` §7) at the cost of a CAS-retry loop plus the availability array's
+per-slot false sharing (`docs/design.md` §8); a batched claim (reserving a contiguous run
+of sequences per CAS instead of one at a time) is the identified v2 lever to close this
+gap. A reference implementation does not hide a lost benchmark.
 
 ## Verification
 

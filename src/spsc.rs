@@ -28,10 +28,12 @@ pub(crate) struct Shared<T> {
     pub(crate) producer_parker: crate::notify::Parker,
 }
 
-// SAFETY: the single-producer/single-consumer discipline (enforced by the
-// unique, !Sync handles taking &mut self) guarantees each slot is written by
-// at most one thread before its Release-publish and read by at most one
-// thread after the matching Acquire. T: Send suffices.
+// SAFETY: the single-producer/single-consumer discipline is enforced by the
+// API surface: `Sender<T>` and `Receiver<T>` have no `Clone` impl, every
+// mutating method takes `&mut self`, and `channel()` hands out exactly one
+// `Sender` and one `Receiver`. This guarantees each slot is written by at most
+// one thread before its Release-publish and read by at most one thread after
+// the matching Acquire. T: Send suffices.
 unsafe impl<T: Send> Send for Shared<T> {}
 unsafe impl<T: Send> Sync for Shared<T> {}
 
@@ -192,7 +194,9 @@ impl<T: Send> Receiver<T> {
     }
 
     /// Consume up to `max` currently-available items, advancing the shared
-    /// head once at the end. Returns the count consumed.
+    /// head once at the end. Returns the count consumed. Note: returns 0 both
+    /// when the ring is empty and after the sender has disconnected; pair with
+    /// `try_recv` to distinguish.
     pub fn drain(&mut self, max: usize, mut f: impl FnMut(T)) -> usize {
         struct PublishGuard<'a> {
             head: &'a mut usize, // private cursor (already advanced per item)

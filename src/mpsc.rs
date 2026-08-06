@@ -254,7 +254,9 @@ impl<T: Send> Receiver<T> {
     }
 
     /// Consume up to `max` items of the contiguous published prefix,
-    /// advancing the shared head once at the end.
+    /// advancing the shared head once at the end. Returns the count consumed.
+    /// Note: returns 0 both when the ring is empty and after all senders have
+    /// disconnected; pair with `try_recv` to distinguish.
     pub fn drain(&mut self, max: usize, mut f: impl FnMut(T)) -> usize {
         struct PublishGuard<'a> {
             head: &'a mut usize, // private cursor (already advanced per item)
