@@ -96,9 +96,18 @@ Slots become `UnsafeCell<MaybeUninit<T>>`. The publish edges are unchanged from
 the proven cores — SPSC: slot `ptr::write` → tail store Release; MPSC: slot
 `ptr::write` → `avail[slot]` store Release (round number `seq / cap`, `-1`
 sentinel) — consumed by `ptr::read` after the corresponding Acquire load.
-Memory orderings are carried over verbatim: claim `fetch_add` Relaxed; head
-loads Acquire / stores Release; consumer advances the shared head once per
-drain.
+Memory orderings are carried over: head loads Acquire / stores Release;
+consumer advances the shared head once per drain.
+
+**Amendment (2026-08-06, planning):** the MPSC claim is a **bounded CAS**, not
+the bench cell's `fetch_add`: a producer claims `seq` only after proving
+`seq − head < cap` (CAS from an observed claim value). Head is monotonic, so a
+successful claim's slot is always already consumed — the in-publish
+backpressure spin disappears, `try_send` can report `Full` without consuming a
+sequence (impossible with `fetch_add`), and a parked sender never holds an
+unfilled slot (no publication holes from blocked senders). The
+availability-publication orderings above are unchanged. Slot indexing uses
+`& (cap−1)` rather than the bench cells' `%` (cap is a checked power of two).
 
 Ring `Drop` drains and drops the initialized-but-unconsumed range (SPSC:
 `head..tail`; MPSC: the contiguous published prefix — by drop time no live
