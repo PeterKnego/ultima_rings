@@ -59,14 +59,12 @@ mod imp {
     /// Multi-waiter list (MPSC producers blocked on a full ring). Cold path
     /// by construction: it only runs once a sender has decided to park.
     #[derive(Debug)]
-    #[allow(dead_code)] // used by mpsc (Task 5)
     pub(crate) struct WaiterList {
         waiting: AtomicBool,
         list: Mutex<Vec<Thread>>,
     }
 
     impl WaiterList {
-        #[allow(dead_code)] // used by mpsc (Task 5)
         pub(crate) fn new() -> Self {
             WaiterList {
                 waiting: AtomicBool::new(false),
@@ -76,21 +74,20 @@ mod imp {
 
         /// Register the current thread. Caller MUST fence(SeqCst) and
         /// re-check before `park`.
-        #[allow(dead_code)] // used by mpsc (Task 5)
+        #[allow(dead_code)] // used in Task 5
         pub(crate) fn prepare_wait(&self) {
             self.list.lock().unwrap().push(std::thread::current());
             self.waiting.store(true, Ordering::Relaxed);
         }
 
         /// Block until woken (or spuriously). Always re-check after return.
-        #[allow(dead_code)] // used by mpsc (Task 5)
+        #[allow(dead_code)] // used in Task 5
         pub(crate) fn park(&self) {
             std::thread::park();
         }
 
         /// Wake every registered waiter (each re-checks its own condition).
         /// Caller MUST have fenced SeqCst after advancing head/disconnecting.
-        #[allow(dead_code)] // used by mpsc (Task 5)
         pub(crate) fn wake_all(&self) {
             if self.waiting.swap(false, Ordering::Relaxed) {
                 for t in self.list.lock().unwrap().drain(..) {
@@ -101,6 +98,4 @@ mod imp {
     }
 }
 
-pub(crate) use imp::Parker;
-#[allow(unused_imports)]
-pub(crate) use imp::WaiterList;
+pub(crate) use imp::{Parker, WaiterList};

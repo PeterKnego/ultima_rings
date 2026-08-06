@@ -23,7 +23,6 @@ pub(crate) struct Shared<T> {
     /// Either handle dropped. One flag serves both directions: a live side
     /// can only ever observe the *other* side's disconnect.
     pub(crate) disconnected: AtomicBool,
-    #[allow(dead_code)] // used in Task 3
     pub(crate) strategy: WaitStrategy,
     pub(crate) consumer_parker: crate::notify::Parker,
     pub(crate) producer_parker: crate::notify::Parker,

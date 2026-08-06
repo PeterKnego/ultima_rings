@@ -6,14 +6,12 @@
 pub(crate) use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 #[cfg(not(loom))]
-#[allow(unused_imports)] // used in Task 3
 pub(crate) use std::sync::atomic::{AtomicI64, fence};
 
 #[cfg(loom)]
 pub(crate) use loom::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 #[cfg(loom)]
-#[allow(unused_imports)] // used in Task 3
 pub(crate) use loom::sync::atomic::{AtomicI64, fence};
 
 /// `UnsafeCell` with loom's closure API in both builds.
