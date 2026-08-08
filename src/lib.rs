@@ -1,4 +1,9 @@
-//! Bounded lock-free SPSC and MPSC rings with pluggable wait strategies.
+//! Bounded lock-free SPSC and MPSC rings with selectable wait strategies.
+//!
+//! "Selectable", not "pluggable": [`WaitStrategy`] is a closed enum of three
+//! variants, chosen once per channel at construction. There is no trait to
+//! implement, so callers cannot supply their own strategy — unlike the LMAX
+//! Disruptor this design descends from, whose `WaitStrategy` is an interface.
 //!
 //! Extracted from the `hi-perf-cmp` thread-handoff benchmarks and hardened
 //! for production use: generic payloads, blocking and non-blocking APIs,

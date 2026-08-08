@@ -1,7 +1,9 @@
 # ultima_rings
 
-Bounded, lock-free, generic-`T` SPSC and MPSC ring channels for Rust, with pluggable wait
+Bounded, lock-free, generic-`T` SPSC and MPSC ring channels for Rust, with selectable wait
 strategies (`BusySpin` / `Backoff` / `Park`) and a `std::sync::mpsc`-shaped API. The
+strategy is a closed enum picked once per channel at construction — there is no trait to
+implement, so it is selectable rather than pluggable in the LMAX Disruptor sense. The
 algorithms are ports of `hi-perf-cmp`'s `thread-handoff-{ring,mpsc_ring}` benchmark
 cells — SPSC's cache-padded head/tail publish protocol and MPSC's LMAX-style
 availability-round publication — generified from their original `u64`-only bench form and
