@@ -73,14 +73,35 @@ further measurements on a verified-quiet box (84–94% CPU idle, 0 runnable,
 2. **`sharded` and `mpsc` are highly reproducible**: `sharded` measured 321.22
    three separate times (spread <0.1%); `mpsc` sits at 29.3–31.6 (~7%).
    crossbeam alone swings 30.09–71.25, a 2.4x spread.
-3. **The asymmetry is mechanistic, not noise.** `crossbeam-channel`'s array
-   flavor calls `backoff.snooze()` on its send and recv paths
-   (`crossbeam-channel-0.5.16/src/flavors/array.rs:207,298,351,411`), and
-   `snooze()` calls `std::thread::yield_now()`
-   (`crossbeam-utils/src/backoff.rs:218`). `ultima_rings` uses only
-   `std::hint::spin_loop()` — a PAUSE, never a yield. So crossbeam hands its
-   timeslice to whatever else is runnable and its throughput tracks how busy
-   the box is, while `ultima_rings` keeps its timeslice regardless.
+3. **The two designs differ in scheduler sensitivity — but the precise cause
+   of the swing is NOT established.** What is verified: the `try_send`/
+   `try_recv` paths this bench uses reach `backoff.snooze()` through
+   `start_send`/`start_recv`
+   (`crossbeam-channel-0.5.16/src/flavors/array.rs:207,298`), and `snooze()`
+   calls `std::thread::yield_now()` once its step exceeds `SPIN_LIMIT`
+   (`crossbeam-utils/src/backoff.rs:205-224`). `ultima_rings` uses only
+   `std::hint::spin_loop()` and can never yield. So crossbeam *can* hand its
+   timeslice to competing work and this crate structurally cannot.
+
+   What that argument does **not** support, and an earlier revision of this
+   document wrongly claimed: that yielding is crossbeam's routine behaviour
+   here and therefore explains the variance. `start_send` constructs a fresh
+   `Backoff::new()` per call (`array.rs:143`), so one `try_send` must loop
+   through seven escalating snooze rounds — 127 `spin_loop()`s in total —
+   before it yields even once. That needs sustained same-slot contention
+   *within a single call*, not merely a contended channel. Note also that
+   `yield_now()` is `sched_yield(2)`, not sleep or park: the thread stays
+   runnable. crossbeam's blocking `send`/`recv` do park, but this benchmark
+   never calls them.
+
+   Other unexamined differences could contribute as much or more — crossbeam
+   does a `SeqCst` fence plus additional atomic traffic per operation on the
+   full-check path, and its slot-stamp protocol makes a producer wait on a
+   slot another producer is mid-write on. **Treat "crossbeam is more
+   scheduler-sensitive than this crate" as established and the specific
+   mechanism as an open question.** Isolating it would need profiling
+   (`perf stat` on context switches and `sched_yield` counts across a quiet
+   and a loaded run), which was not done.
 
 Two candidate confounders are now **ruled out**: `Cargo.lock` is tracked and
 unchanged since `9acfd76`, so both sessions ran the same `crossbeam-channel
@@ -111,23 +132,23 @@ read as one.
 - **`BusySpin` only, no `Park`.** `Park` mode would need a new N-way
   Dekker-style wake protocol at the sharded layer; the ecosystem bake-off's
   Park-parity requirement is untested by this cell.
-- **The comparison structurally favours `ultima_rings` on a busy box, and
-  this applies to every `ultima_rings`-vs-crossbeam number this crate
-  publishes — not just this one.** Per finding 3 above, crossbeam yields its
-  timeslice under contention while `ultima_rings` spins without yielding. On
-  a machine with other runnable work, crossbeam is penalised and
-  `ultima_rings` is not, so the measured ratio inflates with box load: the
-  same pair of cells gives 4.5x on a quiet box and would give ~10x on the
-  loaded one that produced the 30.09 crossbeam reading. Every ratio in this
-  document therefore uses crossbeam's **best** observed figure (71.25), which
-  is the least favourable choice for `ultima_rings` and the only defensible
-  one. A reader comparing these numbers against a *dedicated* benchmark box
-  should expect the gap to narrow, not widen.
-  Note this is a real behavioural difference with real consequences, not
-  purely a measurement artifact — a spinning consumer that never yields is
-  genuinely faster under load and genuinely worse for CPU-sharing
-  neighbours. `Backoff` and `Park` exist in this crate precisely for callers
-  who do not want that trade; neither is measured here.
+- **The comparison favours `ultima_rings` on a busy box, and this applies to
+  every `ultima_rings`-vs-crossbeam number this crate publishes — not just
+  this one.** Empirically (finding 2 above), crossbeam's measured throughput
+  on this box swings 30.09–71.25 while this crate's cells reproduce to within
+  0.1–7%, so the measured *ratio* inflates with box load: the same pair of
+  cells gives 4.5x against crossbeam's quiet-box best and would give ~10x
+  against its loaded-box reading. Every ratio in this document therefore uses
+  crossbeam's **best** observed figure (71.25) — the least favourable choice
+  for `ultima_rings` and the only defensible one. A reader comparing against
+  a *dedicated* benchmark box should expect the gap to narrow, not widen.
+  This is a load-sensitivity difference between the two designs, established
+  empirically; see finding 3 for what is and is not known about why. To the
+  extent it comes from this crate spinning without ever yielding, it is a
+  real behavioural trade and not merely a measurement artifact — a consumer
+  that never yields is genuinely faster under load and genuinely worse for
+  CPU-sharing neighbours. `Backoff` and `Park` exist for callers who do not
+  want that trade; neither is measured here.
 
 ## Verdict
 
