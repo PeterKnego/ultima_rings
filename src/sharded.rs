@@ -41,6 +41,13 @@ const VISIT_BUDGET: usize = 32;
 /// Panics unless `n_shards > 0`, `total_cap` divides evenly by `n_shards`, and
 /// the resulting per-shard capacity is a positive power of two (which, for a
 /// power-of-two `total_cap`, means `n_shards` must itself be a power of two).
+///
+/// Also panics if `strategy` is not [`WaitStrategy::BusySpin`]. This module
+/// has no blocking `recv` at the sharded layer, so nothing here ever parks;
+/// `WaitStrategy::Park` would still compile (each shard is a plain
+/// [`crate::spsc`] channel) but would silently pay a `SeqCst` fence plus a
+/// parker wake on every `try_send` for zero benefit. Rejecting it loudly
+/// beats a quiet 2x-slower footgun.
 pub fn channel<T: Send>(
     n_shards: usize,
     total_cap: usize,
@@ -56,6 +63,12 @@ pub fn channel<T: Send>(
         per_shard > 0 && per_shard.is_power_of_two(),
         "per-shard capacity {per_shard} (= {total_cap} / {n_shards}) \
          must be a positive power of two"
+    );
+    assert!(
+        matches!(strategy, WaitStrategy::BusySpin),
+        "sharded::channel only supports WaitStrategy::BusySpin \
+         (got {strategy:?}); there is no blocking recv at the sharded \
+         layer, so Park would pay a per-item parker wake for no benefit"
     );
     let mut senders = Vec::with_capacity(n_shards);
     let mut shards = Vec::with_capacity(n_shards);
@@ -166,6 +179,12 @@ mod tests {
     fn rejects_non_power_of_two_per_shard() {
         // 100 / 4 = 25: divides evenly, but 25 is not a power of two.
         let _ = channel::<u64>(4, 100, WaitStrategy::BusySpin);
+    }
+
+    #[test]
+    #[should_panic(expected = "only supports WaitStrategy::BusySpin")]
+    fn rejects_park_strategy() {
+        let _ = channel::<u64>(2, 1024, WaitStrategy::Park);
     }
 
     #[test]
