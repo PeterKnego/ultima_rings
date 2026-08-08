@@ -1,2 +1,4 @@
 target/
-.claude/worktrees/
+# Local Claude Code state: worktree checkouts and per-machine tool settings.
+# Nothing here is project configuration.
+.claude/
