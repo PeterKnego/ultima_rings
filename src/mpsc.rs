@@ -151,7 +151,7 @@ impl<T: Send> Sender<T> {
     pub fn send(&mut self, v: T) -> Result<(), crate::SendError<T>> {
         use crate::wait::Idle;
         let mut v = v;
-        let mut idle = Idle::new();
+        let mut idle = Idle::for_strategy(self.shared.strategy);
         loop {
             match self.try_send(v) {
                 Ok(()) => return Ok(()),
@@ -161,7 +161,9 @@ impl<T: Send> Sender<T> {
                     let sh = &*self.shared;
                     match sh.strategy {
                         WaitStrategy::BusySpin => std::hint::spin_loop(),
-                        WaitStrategy::Backoff => idle.idle(),
+                        // Both ladders live in `Idle`; which rungs it climbs
+                        // was fixed by `Idle::for_strategy` above.
+                        WaitStrategy::Backoff | WaitStrategy::BackoffYield => idle.idle(),
                         WaitStrategy::Park => {
                             sh.prod_waiters.prepare_wait();
                             crate::atomic::fence(Ordering::SeqCst);
@@ -226,7 +228,7 @@ impl<T: Send> Receiver<T> {
     /// Pop, blocking per the wait strategy while the ring is empty.
     pub fn recv(&mut self) -> Result<T, crate::RecvError> {
         use crate::wait::Idle;
-        let mut idle = Idle::new();
+        let mut idle = Idle::for_strategy(self.shared.strategy);
         loop {
             match self.try_recv() {
                 Ok(v) => return Ok(v),
@@ -235,7 +237,9 @@ impl<T: Send> Receiver<T> {
                     let sh = &*self.shared;
                     match sh.strategy {
                         WaitStrategy::BusySpin => std::hint::spin_loop(),
-                        WaitStrategy::Backoff => idle.idle(),
+                        // Both ladders live in `Idle`; which rungs it climbs
+                        // was fixed by `Idle::for_strategy` above.
+                        WaitStrategy::Backoff | WaitStrategy::BackoffYield => idle.idle(),
                         WaitStrategy::Park => {
                             sh.consumer_parker.prepare_park();
                             crate::atomic::fence(Ordering::SeqCst);
