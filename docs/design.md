@@ -442,12 +442,13 @@ path at all: their fast path is the bare lock-free core, nothing more, so the fe
 cost `Park` mode alone opts into in exchange for zero idle CPU.
 
 **`Backoff`'s zero cross-side cost.** The `Backoff` strategy's idle ladder
-(`src/wait.rs`'s `Idle`: 10 spins → 20 yields → timed parks doubling 1 µs → 1 ms) is
+(`src/wait.rs`'s `Idle`: 10 spins → 20 yields → timed parks doubling 64 µs → 1 ms) is
 entirely self-contained on the blocked side — `Idle::idle()` never touches the peer's
 state and never calls `wake`/`wake_all`. The *other* side (the one making progress) pays
 **nothing extra** when the channel is configured for `Backoff`: no fence, no flag check, no
 conditional branch beyond the ordinary `strategy == WaitStrategy::Park` guards that are
-false for `Backoff`. This is the direct payoff of choosing a self-waking ladder (timed
+false for `Backoff`. The same holds for `BackoffYield`, which shares the `Idle` type and
+simply never climbs past its yield rung. This is the direct payoff of choosing a self-waking ladder (timed
 parks that give up and re-check on their own) over a notification-based design for this
 strategy: the entire cost of "did my peer make progress" is paid by the blocked thread
 polling on a timer, never by the productive thread being asked to additionally notify

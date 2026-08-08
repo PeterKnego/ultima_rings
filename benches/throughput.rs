@@ -103,7 +103,81 @@ fn mpsc_throughput(c: &mut Criterion) {
     g.finish();
 }
 
-criterion_group!(benches, spsc_throughput, mpsc_throughput);
+// ---------------------------------------------------------------------------
+// Paced handoff: the only cell that actually exercises the wait-strategy
+// ladders. A saturating throughput bench never does — the ring is rarely empty
+// long enough for `Idle` to climb past its spin rungs. Pacing the producer
+// forces the consumer's ladder to deepen before every wake, which is what
+// separates the strategies. Same rationale as hi-perf-cmp's paced ping-pong
+// grid (docs/superpowers/specs/2026-08-05-thread-handoff-backoff-design.md
+// upstream).
+//
+// With a 200 us gap the responder's ladder climbs: 10 spins, 20 yields
+// (~14 us), then timed parks from PARK_MIN.
+//
+// It must be a PING-PONG, not a one-way stream. An earlier one-way version of
+// this bench measured nothing: the producer never waited on the consumer, so
+// the consumer's wake latency was off the critical path and all four
+// strategies reported the pacing time and nothing else. Round-tripping puts
+// the responder's wake on the requester's critical path, which is the whole
+// point. Reported time is PACED_ROUNDS x (gap + RTT); the gap is identical
+// across strategies, so the deltas between cells are wake latency.
+// ---------------------------------------------------------------------------
+
+const PACED_GAP: std::time::Duration = std::time::Duration::from_micros(200);
+const PACED_ROUNDS: u64 = 500;
+
+fn wait_strategy_paced_handoff(c: &mut Criterion) {
+    let mut g = c.benchmark_group("wait_strategy_paced_handoff");
+    g.throughput(Throughput::Elements(PACED_ROUNDS));
+    for (name, strategy) in [
+        ("busy_spin", WaitStrategy::BusySpin),
+        ("backoff_yield", WaitStrategy::BackoffYield),
+        ("backoff", WaitStrategy::Backoff),
+        ("park", WaitStrategy::Park),
+    ] {
+        g.bench_function(name, |b| {
+            b.iter_custom(|iters| {
+                let mut total = std::time::Duration::ZERO;
+                for _ in 0..iters {
+                    let (mut req_tx, mut req_rx) = spsc::channel::<u64>(1024, strategy);
+                    let (mut resp_tx, mut resp_rx) = spsc::channel::<u64>(1024, strategy);
+                    let responder = thread::spawn(move || {
+                        for _ in 0..PACED_ROUNDS {
+                            // Blocks on an empty ring: this is the ladder
+                            // under test, deepened by the requester's gap.
+                            let v = req_rx.recv().unwrap();
+                            resp_tx.send(v).unwrap();
+                        }
+                    });
+                    let t = Instant::now();
+                    for i in 0..PACED_ROUNDS {
+                        // Spin to the deadline rather than sleeping: the pacing
+                        // gap must not inherit park_timeout's ~60 us overshoot,
+                        // or it would swamp the wake latency being measured.
+                        let deadline = Instant::now() + PACED_GAP;
+                        while Instant::now() < deadline {
+                            std::hint::spin_loop();
+                        }
+                        req_tx.send(i).unwrap();
+                        resp_rx.recv().unwrap();
+                    }
+                    responder.join().unwrap();
+                    total += t.elapsed();
+                }
+                total
+            })
+        });
+    }
+    g.finish();
+}
+
+criterion_group!(
+    benches,
+    spsc_throughput,
+    mpsc_throughput,
+    wait_strategy_paced_handoff
+);
 
 // ---------------------------------------------------------------------------
 // Bake-off: same two workloads (pipelined SPSC 100k through cap-1024;

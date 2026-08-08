@@ -1,7 +1,8 @@
 # ultima_rings
 
 Bounded, lock-free, generic-`T` SPSC and MPSC ring channels for Rust, with selectable wait
-strategies (`BusySpin` / `Backoff` / `Park`) and a `std::sync::mpsc`-shaped API. The
+strategies (`BusySpin` / `BackoffYield` / `Backoff` / `Park`) and a
+`std::sync::mpsc`-shaped API. The
 strategy is a closed enum picked once per channel at construction — there is no trait to
 implement, so it is selectable rather than pluggable in the LMAX Disruptor sense. The
 algorithms are ports of `hi-perf-cmp`'s `thread-handoff-{ring,mpsc_ring}` benchmark
@@ -35,9 +36,17 @@ producer-on-full):
 
 | Strategy | Behavior | Use when |
 |---|---|---|
-| `BusySpin` | `spin_loop()` until progress; one core pinned per blocked side | latency matters at any CPU cost |
-| `Backoff` | Aeron-style idle ladder — 10 spins → 20 yields → timed park doubling 1 µs → 1 ms, self-waking | a balanced default: low latency while active, low CPU while idle |
+| `BusySpin` | `spin_loop()` until progress (~27 ns granularity); one core pinned per blocked side | latency matters at any CPU cost |
+| `BackoffYield` | 10 spins, then `yield_now()` indefinitely (~0.7 µs granularity); never parks, self-waking | you want near-`BusySpin` latency but must not starve other runnable threads |
+| `Backoff` | Aeron-style idle ladder — 10 spins → 20 yields → timed park doubling 64 µs → 1 ms, self-waking | a balanced default: low latency while active, low CPU while idle |
 | `Park` | Fully blocking park/wake via the notify layer; ~1–5 µs wake latency | idle CPU efficiency matters more than the last few microseconds of latency |
+
+`BackoffYield` still consumes a core when the machine is otherwise idle — `yield_now()`
+returns immediately with nothing else runnable. It buys prompt preemption under
+contention, not idle CPU; reach for `Backoff` or `Park` if CPU is the concern. The
+`Backoff` park floor is 64 µs because `thread::park_timeout` cannot deliver sub-floor
+sleeps: a 1 µs request measured ~60 µs on a 4-core Linux VM, so finer rungs would be
+fiction (see `src/wait.rs`'s `PARK_MIN`).
 
 ## Measured numbers
 

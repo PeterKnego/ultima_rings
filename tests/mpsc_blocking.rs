@@ -45,6 +45,11 @@ fn roundtrip_backoff() {
 }
 
 #[test]
+fn roundtrip_backoff_yield() {
+    roundtrip(WaitStrategy::BackoffYield);
+}
+
+#[test]
 fn roundtrip_park() {
     roundtrip(WaitStrategy::Park);
 }
