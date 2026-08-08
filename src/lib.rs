@@ -10,6 +10,8 @@
 mod atomic;
 pub mod mpsc;
 mod notify;
+#[cfg(feature = "experimental-sharded")]
+pub mod sharded;
 pub mod spsc;
 mod wait;
 

@@ -16,6 +16,11 @@ flume = "0.11"
 kanal = "0.1"
 rtrb = "0.3"
 
+[features]
+# Experimental sharded MPSC prototype (N x SPSC + round-robin consumer).
+# Default off: not part of the stable API, BusySpin-only, no loom models.
+experimental-sharded = []
+
 [target.'cfg(loom)'.dependencies]
 loom = "0.7"
 
