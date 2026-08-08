@@ -31,11 +31,11 @@
 | `src/sharded.rs` | **Create.** The whole prototype: `channel()`, `Sender`, `Receiver`, unit tests. ~150 lines. |
 | `tests/sharded_stress.rs` | **Create.** Per-producer FIFO stress + drop accounting. |
 | `benches/throughput.rs` | Adds the `bakeoff_sharded_mpsc` group and feature-gated `criterion_main!` (modify) |
-| `docs/bench-results/2026-08-07-sharded-mpsc.md` | **Create in Task 5.** The measurement and the gate verdict. |
+| `docs/bench-results/2026-08-07-sharded-mpsc.md` | **Create in Task 4.** The measurement and the gate verdict. |
 
 ---
 
-### Task 1: Feature flag, module scaffold, and the send path
+### Task 1: The sharded channel — construction, send, and the consumer sweep
 
 **Files:**
 - Modify: `Cargo.toml` (add `[features]` section after `[dev-dependencies]`)
@@ -43,8 +43,10 @@
 - Create: `src/sharded.rs`
 
 **Interfaces:**
-- Consumes: `crate::spsc::channel(cap: usize, strategy: WaitStrategy) -> (spsc::Sender<T>, spsc::Receiver<T>)`; `crate::wait::WaitStrategy`; `crate::TrySendError<T>`
-- Produces: `sharded::channel<T: Send>(n_shards: usize, total_cap: usize, strategy: WaitStrategy) -> (Vec<Sender<T>>, Receiver<T>)`; `Sender<T>::try_send(&mut self, v: T) -> Result<(), TrySendError<T>>`; module-private `const VISIT_BUDGET: usize = 32`; `Receiver<T>` struct with private fields `shards: Vec<spsc::Receiver<T>>`, `cursor: usize`, `budget: usize`
+- Consumes: `crate::spsc::channel(cap: usize, strategy: WaitStrategy) -> (spsc::Sender<T>, spsc::Receiver<T>)`; `spsc::Sender::try_send`; `spsc::Receiver::try_recv`; `crate::wait::WaitStrategy`; `crate::TrySendError<T>`; `crate::TryRecvError`
+- Produces: `sharded::channel<T: Send>(n_shards: usize, total_cap: usize, strategy: WaitStrategy) -> (Vec<Sender<T>>, Receiver<T>)`; `Sender<T>::try_send(&mut self, v: T) -> Result<(), TrySendError<T>>`; `Receiver<T>::try_recv(&mut self) -> Result<T, TryRecvError>`; module-private `const VISIT_BUDGET: usize = 32`; module-private `Receiver<T>::advance(&mut self)`
+
+> **Why this task is not split further:** an earlier draft separated construction/send from the consumer sweep. That split cannot satisfy the Global Constraint `cargo clippy -- -D warnings`, because `VISIT_BUDGET` and `Receiver`'s three fields are dead code until `try_recv` exists. Keep them together; do not reintroduce the split, and do not paper over it with `#[allow(dead_code)]`.
 
 - [ ] **Step 1: Add the feature to `Cargo.toml`**
 
@@ -89,7 +91,7 @@ Create `src/sharded.rs` containing ONLY this test module for now (the code above
 #[cfg(all(test, not(loom)))]
 mod tests {
     use super::*;
-    use crate::{TrySendError, WaitStrategy};
+    use crate::{TryRecvError, TrySendError, WaitStrategy};
 
     #[test]
     #[should_panic(expected = "must divide evenly")]
@@ -117,6 +119,86 @@ mod tests {
         assert_eq!(senders[0].try_send(512), Err(TrySendError::Full(512)));
         // The other shard is untouched and still accepts its full 512.
         senders[1].try_send(0).unwrap();
+    }
+
+    #[test]
+    fn sticky_cursor_drains_a_shard_before_advancing() {
+        let (mut senders, mut rx) = channel::<u64>(2, 8, WaitStrategy::BusySpin);
+        senders[0].try_send(1).unwrap();
+        senders[0].try_send(2).unwrap();
+        senders[0].try_send(3).unwrap();
+        senders[1].try_send(10).unwrap();
+        senders[1].try_send(20).unwrap();
+        let mut got = Vec::new();
+        while let Ok(v) = rx.try_recv() {
+            got.push(v);
+        }
+        // Shard 0 is drained first (sticky), then the cursor advances.
+        assert_eq!(got, vec![1, 2, 3, 10, 20]);
+    }
+
+    #[test]
+    fn visit_budget_advances_cursor_after_32_items() {
+        // 2 shards x 64. Shard 0 holds more than VISIT_BUDGET items, so the
+        // cursor must move on mid-shard instead of draining it.
+        let (mut senders, mut rx) = channel::<u64>(2, 128, WaitStrategy::BusySpin);
+        for i in 0..40 {
+            senders[0].try_send(i).unwrap();
+        }
+        senders[1].try_send(999).unwrap();
+        let mut got = Vec::new();
+        for _ in 0..34 {
+            got.push(rx.try_recv().unwrap());
+        }
+        assert_eq!(got[..32], (0..32).collect::<Vec<u64>>()[..]);
+        assert_eq!(got[32], 999, "budget exhausted: cursor must advance");
+        assert_eq!(got[33], 32, "shard 1 empty: cursor wraps back to shard 0");
+    }
+
+    #[test]
+    fn disconnect_requires_every_shard() {
+        let (mut senders, mut rx) = channel::<u64>(2, 8, WaitStrategy::BusySpin);
+        senders[1].try_send(7).unwrap();
+        let s1 = senders.pop().unwrap();
+        let s0 = senders.pop().unwrap();
+        drop(s0);
+        // Shard 0 disconnected+drained, shard 1 still live and holding 7.
+        assert_eq!(rx.try_recv(), Ok(7));
+        assert_eq!(
+            rx.try_recv(),
+            Err(TryRecvError::Empty),
+            "one live shard means Empty, never Disconnected"
+        );
+        drop(s1);
+        assert_eq!(rx.try_recv(), Err(TryRecvError::Disconnected));
+    }
+
+    #[test]
+    fn drains_remaining_items_after_all_senders_drop() {
+        let (mut senders, mut rx) = channel::<u64>(2, 8, WaitStrategy::BusySpin);
+        senders[0].try_send(1).unwrap();
+        senders[1].try_send(2).unwrap();
+        drop(senders);
+        assert_eq!(rx.try_recv(), Ok(1));
+        assert_eq!(rx.try_recv(), Ok(2));
+        assert_eq!(rx.try_recv(), Err(TryRecvError::Disconnected));
+    }
+
+    #[test]
+    fn single_shard_degenerates_cleanly() {
+        let (mut senders, mut rx) = channel::<u64>(1, 4, WaitStrategy::BusySpin);
+        senders[0].try_send(1).unwrap();
+        senders[0].try_send(2).unwrap();
+        assert_eq!(rx.try_recv(), Ok(1));
+        assert_eq!(rx.try_recv(), Ok(2));
+        assert_eq!(rx.try_recv(), Err(TryRecvError::Empty));
+    }
+
+    #[test]
+    fn zero_sized_payloads_work() {
+        let (mut senders, mut rx) = channel::<()>(2, 8, WaitStrategy::BusySpin);
+        senders[0].try_send(()).unwrap();
+        assert_eq!(rx.try_recv(), Ok(()));
     }
 }
 ```
@@ -231,138 +313,7 @@ pub struct Receiver<T: Send> {
     cursor: usize,
     budget: usize,
 }
-```
 
-- [ ] **Step 6: Run the tests to verify they pass**
-
-Run: `cargo test --features experimental-sharded --lib sharded`
-Expected: PASS, 3 tests.
-
-Note: `Receiver` has no methods yet, so `dead_code` warnings on `cursor`/`budget`/`VISIT_BUDGET` are expected here and disappear in Task 2. Do not add `#[allow(dead_code)]` — Task 2 resolves it.
-
-- [ ] **Step 7: Verify the default build is untouched**
-
-Run: `cargo build && cargo test --lib`
-Expected: PASS, and `src/sharded.rs` is NOT compiled (the feature is off).
-
-- [ ] **Step 8: Commit**
-
-```bash
-git add Cargo.toml src/lib.rs src/sharded.rs
-git commit -m "feat(sharded): feature flag, channel() capacity split, send path
-
-Composes N independent spsc channels behind a fixed Sender set. Total-cap
-semantics (total_cap / n_shards per shard) so the bake-off compares equal
-buffer against crossbeam::bounded. No unsafe, default-off feature."
-```
-
----
-
-### Task 2: The consumer sweep — sticky cursor, visit budget, disconnect aggregation
-
-**Files:**
-- Modify: `src/sharded.rs` (add `impl Receiver`, extend the test module)
-
-**Interfaces:**
-- Consumes: `Receiver<T>` fields `shards`/`cursor`/`budget` and `VISIT_BUDGET` from Task 1; `spsc::Receiver::try_recv(&mut self) -> Result<T, TryRecvError>`
-- Produces: `Receiver<T>::try_recv(&mut self) -> Result<T, TryRecvError>`
-
-- [ ] **Step 1: Write the failing tests**
-
-Add these to the `mod tests` block in `src/sharded.rs`. Also add `TryRecvError` to the test module's import: change `use crate::{TrySendError, WaitStrategy};` to `use crate::{TryRecvError, TrySendError, WaitStrategy};`
-
-```rust
-    #[test]
-    fn sticky_cursor_drains_a_shard_before_advancing() {
-        let (mut senders, mut rx) = channel::<u64>(2, 8, WaitStrategy::BusySpin);
-        senders[0].try_send(1).unwrap();
-        senders[0].try_send(2).unwrap();
-        senders[0].try_send(3).unwrap();
-        senders[1].try_send(10).unwrap();
-        senders[1].try_send(20).unwrap();
-        let mut got = Vec::new();
-        while let Ok(v) = rx.try_recv() {
-            got.push(v);
-        }
-        // Shard 0 is drained first (sticky), then the cursor advances.
-        assert_eq!(got, vec![1, 2, 3, 10, 20]);
-    }
-
-    #[test]
-    fn visit_budget_advances_cursor_after_32_items() {
-        // 2 shards x 64. Shard 0 holds more than VISIT_BUDGET items, so the
-        // cursor must move on mid-shard instead of draining it.
-        let (mut senders, mut rx) = channel::<u64>(2, 128, WaitStrategy::BusySpin);
-        for i in 0..40 {
-            senders[0].try_send(i).unwrap();
-        }
-        senders[1].try_send(999).unwrap();
-        let mut got = Vec::new();
-        for _ in 0..34 {
-            got.push(rx.try_recv().unwrap());
-        }
-        assert_eq!(got[..32], (0..32).collect::<Vec<u64>>()[..]);
-        assert_eq!(got[32], 999, "budget exhausted: cursor must advance");
-        assert_eq!(got[33], 32, "shard 1 empty: cursor wraps back to shard 0");
-    }
-
-    #[test]
-    fn disconnect_requires_every_shard() {
-        let (mut senders, mut rx) = channel::<u64>(2, 8, WaitStrategy::BusySpin);
-        senders[1].try_send(7).unwrap();
-        let s1 = senders.pop().unwrap();
-        let s0 = senders.pop().unwrap();
-        drop(s0);
-        // Shard 0 disconnected+drained, shard 1 still live and holding 7.
-        assert_eq!(rx.try_recv(), Ok(7));
-        assert_eq!(
-            rx.try_recv(),
-            Err(TryRecvError::Empty),
-            "one live shard means Empty, never Disconnected"
-        );
-        drop(s1);
-        assert_eq!(rx.try_recv(), Err(TryRecvError::Disconnected));
-    }
-
-    #[test]
-    fn drains_remaining_items_after_all_senders_drop() {
-        let (mut senders, mut rx) = channel::<u64>(2, 8, WaitStrategy::BusySpin);
-        senders[0].try_send(1).unwrap();
-        senders[1].try_send(2).unwrap();
-        drop(senders);
-        assert_eq!(rx.try_recv(), Ok(1));
-        assert_eq!(rx.try_recv(), Ok(2));
-        assert_eq!(rx.try_recv(), Err(TryRecvError::Disconnected));
-    }
-
-    #[test]
-    fn single_shard_degenerates_cleanly() {
-        let (mut senders, mut rx) = channel::<u64>(1, 4, WaitStrategy::BusySpin);
-        senders[0].try_send(1).unwrap();
-        senders[0].try_send(2).unwrap();
-        assert_eq!(rx.try_recv(), Ok(1));
-        assert_eq!(rx.try_recv(), Ok(2));
-        assert_eq!(rx.try_recv(), Err(TryRecvError::Empty));
-    }
-
-    #[test]
-    fn zero_sized_payloads_work() {
-        let (mut senders, mut rx) = channel::<()>(2, 8, WaitStrategy::BusySpin);
-        senders[0].try_send(()).unwrap();
-        assert_eq!(rx.try_recv(), Ok(()));
-    }
-```
-
-- [ ] **Step 2: Run the tests to verify they fail**
-
-Run: `cargo test --features experimental-sharded --lib sharded`
-Expected: FAIL — compile error, `no method named 'try_recv' found for struct 'Receiver'`.
-
-- [ ] **Step 3: Write the implementation**
-
-Add to `src/sharded.rs`, directly after the `Receiver` struct definition and before the test module:
-
-```rust
 impl<T: Send> Receiver<T> {
     /// Pop without blocking, sweeping shards from the current cursor.
     ///
@@ -415,36 +366,43 @@ impl<T: Send> Receiver<T> {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `cargo test --features experimental-sharded --lib sharded`
 Expected: PASS, 9 tests.
 
-- [ ] **Step 5: Check lints and formatting**
+- [ ] **Step 7: Verify the default build is untouched**
+
+Run: `cargo build && cargo test --lib`
+Expected: PASS, and `src/sharded.rs` is NOT compiled (the feature is off).
+
+- [ ] **Step 8: Check lints and formatting**
 
 Run: `cargo clippy --features experimental-sharded --all-targets -- -D warnings && cargo fmt --check`
 Expected: clean, no output from clippy, no diff from fmt.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add src/sharded.rs
-git commit -m "feat(sharded): consumer sweep with sticky cursor and visit budget
+git add Cargo.toml src/lib.rs src/sharded.rs
+git commit -m "feat(sharded): N x SPSC channel with sticky round-robin consumer
 
-try_recv stays on a shard for up to 32 consecutive items, then advances;
-Disconnected only when every shard is drained and sender-dropped. Full
-n_shards scan to conclude Empty is the documented structural cost."
+Composes N independent spsc channels behind a fixed Sender set. Total-cap
+semantics (total_cap / n_shards per shard) so the bake-off compares equal
+buffer against crossbeam::bounded. try_recv stays on a shard for up to 32
+consecutive items, then advances; Disconnected only when every shard is
+drained and sender-dropped. No unsafe, default-off feature."
 ```
 
 ---
 
-### Task 3: Stress and drop-accounting tests
+### Task 2: Stress and drop-accounting tests
 
 **Files:**
 - Create: `tests/sharded_stress.rs`
 
 **Interfaces:**
-- Consumes: `ultima_rings::sharded::channel(n_shards, total_cap, strategy)`, `Sender::try_send`, `Receiver::try_recv` from Tasks 1-2
+- Consumes: `ultima_rings::sharded::channel(n_shards, total_cap, strategy)`, `Sender::try_send`, `Receiver::try_recv` from Task 1
 - Produces: nothing consumed by later tasks
 
 - [ ] **Step 1: Write the failing test file**
@@ -560,7 +518,7 @@ fn every_value_dropped_exactly_once_including_ring_drop() {
 - [ ] **Step 2: Run the tests**
 
 Run: `cargo test --features experimental-sharded --test sharded_stress`
-Expected: PASS, 3 tests. (These pass immediately — Tasks 1-2 already implement the behavior. Their job is to catch regressions and to verify the ordering contract under real contention, not to drive new code.)
+Expected: PASS, 3 tests. (These pass immediately — Task 1 already implements the behavior. Their job is to catch regressions and to verify the ordering contract under real contention, not to drive new code.)
 
 - [ ] **Step 3: Run the whole suite to confirm nothing regressed**
 
@@ -585,13 +543,13 @@ contract this type provides — never global order."
 
 ---
 
-### Task 4: Bake-off bench group
+### Task 3: Bake-off bench group
 
 **Files:**
 - Modify: `benches/throughput.rs` (add the group after `bakeoff_mpsc` ends at line 396; replace the `criterion_main!` at line 399)
 
 **Interfaces:**
-- Consumes: `ultima_rings::sharded::channel`, `Sender::try_send`, `Receiver::try_recv` from Tasks 1-2; existing bench constants `BATCH` (line 12) and the already-imported `Arc`, `Barrier`, `thread`, `Instant`, `Criterion`, `Throughput`, `TryRecvError`, `TrySendError`, `WaitStrategy`
+- Consumes: `ultima_rings::sharded::channel`, `Sender::try_send`, `Receiver::try_recv` from Task 1; existing bench constants `BATCH` (line 12) and the already-imported `Arc`, `Barrier`, `thread`, `Instant`, `Criterion`, `Throughput`, `TryRecvError`, `TrySendError`, `WaitStrategy`
 - Produces: criterion group `bakeoff_sharded_mpsc` with bench function `ultima_sharded_2_producers`
 
 - [ ] **Step 1: Add the bench group**
@@ -699,7 +657,7 @@ Expected: both succeed. The first must NOT contain the sharded group.
 - [ ] **Step 4: Smoke-test the new group**
 
 Run: `cargo bench --features experimental-sharded -- --quick bakeoff_sharded_mpsc`
-Expected: completes and prints a `thrpt` figure in Melem/s. This is a smoke test for wiring only — do not record this number; Task 5 does the real measurement.
+Expected: completes and prints a `thrpt` figure in Melem/s. This is a smoke test for wiring only — do not record this number; Task 4 does the real measurement.
 
 - [ ] **Step 5: Check lints and formatting**
 
@@ -718,13 +676,13 @@ the same barrier-released 2-producer harness and BATCH as bakeoff_mpsc."
 
 ---
 
-### Task 5: Measure, record, and evaluate the gate
+### Task 4: Measure, record, and evaluate the gate
 
 **Files:**
 - Create: `docs/bench-results/2026-08-07-sharded-mpsc.md`
 
 **Interfaces:**
-- Consumes: the `bakeoff_sharded_mpsc` group from Task 4; existing groups `mpsc/busy_spin_2_producers` and `bakeoff_mpsc/crossbeam`
+- Consumes: the `bakeoff_sharded_mpsc` group from Task 3; existing groups `mpsc/busy_spin_2_producers` and `bakeoff_mpsc/crossbeam`
 - Produces: the measurement and the go/no-go verdict — no code
 
 - [ ] **Step 1: Build everything to completion first**
@@ -810,7 +768,7 @@ capacity. <one-line verdict>"
 
 ## Follow-ups (explicitly NOT part of this plan)
 
-These are informed by Task 5's result and must not be started before it:
+These are informed by Task 4's result and must not be started before it:
 
 - `docs/design.md` §9 gains a "sharded SPSC" entry under Alternatives considered — a real gap (§9 covers Vyukov stamps, kanal's stack transfer, and flume's lock, but not the most obvious alternative to a shared-claim MPSC). Writing it before the number exists means guessing the conclusion.
 - If the gate's third branch lands, §7 and §8 need correcting to state the dominant MPSC cost is unidentified.
