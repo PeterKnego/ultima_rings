@@ -395,5 +395,79 @@ fn bakeoff_mpsc(c: &mut Criterion) {
     g.finish();
 }
 
+// ---------------------------------------------------------------------------
+// Sharded MPSC prototype (feature `experimental-sharded`). Same harness shape,
+// BATCH, and total buffered capacity as `bakeoff_mpsc` above, so the two are
+// directly comparable: 2 shards x 512 = 1024 slots, matching
+// crossbeam_channel::bounded(1024). See
+// docs/superpowers/specs/2026-08-07-sharded-mpsc-design.md.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "experimental-sharded")]
+fn bakeoff_sharded_mpsc(c: &mut Criterion) {
+    use ultima_rings::sharded;
+    let mut g = c.benchmark_group("bakeoff_sharded_mpsc");
+    g.throughput(Throughput::Elements(BATCH));
+    g.bench_function("ultima_sharded_2_producers", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (senders, mut rx) = sharded::channel::<u64>(2, 1024, WaitStrategy::BusySpin);
+                let barrier = Arc::new(Barrier::new(3));
+                let mut handles = Vec::new();
+                // Every sender is moved into a thread, so there is no
+                // leftover handle to drop (unlike the mpsc groups, where the
+                // original `tx` must be dropped for the consumer to finish).
+                for mut tx in senders {
+                    let barrier = Arc::clone(&barrier);
+                    handles.push(thread::spawn(move || {
+                        barrier.wait();
+                        for i in 0..BATCH / 2 {
+                            let mut v = i;
+                            loop {
+                                match tx.try_send(v) {
+                                    Ok(()) => break,
+                                    Err(TrySendError::Full(b)) => {
+                                        v = b;
+                                        std::hint::spin_loop();
+                                    }
+                                    Err(TrySendError::Disconnected(_)) => return,
+                                }
+                            }
+                        }
+                    }));
+                }
+                barrier.wait();
+                let t = Instant::now();
+                let mut got = 0u64;
+                loop {
+                    match rx.try_recv() {
+                        Ok(_) => got += 1,
+                        Err(TryRecvError::Empty) => std::hint::spin_loop(),
+                        Err(TryRecvError::Disconnected) => break,
+                    }
+                    if got == BATCH {
+                        break;
+                    }
+                }
+                total += t.elapsed();
+                for h in handles {
+                    h.join().unwrap();
+                }
+            }
+            total
+        })
+    });
+    g.finish();
+}
+
 criterion_group!(bakeoff, bakeoff_spsc, bakeoff_mpsc);
+
+#[cfg(feature = "experimental-sharded")]
+criterion_group!(bakeoff_sharded, bakeoff_sharded_mpsc);
+
+#[cfg(feature = "experimental-sharded")]
+criterion_main!(benches, bakeoff, bakeoff_sharded);
+
+#[cfg(not(feature = "experimental-sharded"))]
 criterion_main!(benches, bakeoff);
