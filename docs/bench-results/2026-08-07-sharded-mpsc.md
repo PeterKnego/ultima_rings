@@ -1,9 +1,15 @@
 # Sharded MPSC prototype vs. shared-claim MPSC and crossbeam-channel
 
-**Date:** 2026-08-07
-**Hardware:** 4-core box, 15 GiB RAM, no swap; built to completion before measuring
+**Date:** 2026-08-07; crossbeam baseline settled 2026-08-08 (see "Follow-up" below)
+**Hardware:** 4-core VM, 15 GiB RAM, no swap; built to completion before measuring
 **Feature:** `experimental-sharded`
 **Spec:** `docs/superpowers/specs/2026-08-07-sharded-mpsc-design.md`
+
+> **Headline:** sharded 321.5 Melem/s vs crossbeam's settled 71.25 = **4.51x**.
+> An earlier revision of this document read 6.23x against a crossbeam figure
+> since shown to be depressed. The gate outcome is unchanged; the ratio is
+> not. See "Follow-up" for how the baseline was settled and why this
+> comparison structurally favours `ultima_rings` on a loaded box.
 
 ## Methodology
 
@@ -28,42 +34,59 @@ measured run.
 
 ## Results
 
-| Cell | Melem/s (mid) | Melem/s (range) | vs. crossbeam (same-session) | vs. crossbeam (v1, 71.0) |
-|---|---:|---|---:|---:|
-| sharded (2 shards x 512) | 321.52 | 317.52 – 324.63 | 6.23x | 4.53x |
-| crossbeam-channel | 51.649 | 50.616 – 52.622 | 1.00x | — |
-| mpsc (shared bounded-CAS claim) | 29.308 | 29.080 – 29.557 | 0.57x | — |
+| Cell | Melem/s (mid) | Melem/s (range) | vs. crossbeam's settled 71.25 |
+|---|---:|---|---:|
+| sharded (2 shards x 512) | 321.52 | 317.52 – 324.63 | **4.51x** |
+| crossbeam-channel | 51.649 | 50.616 – 52.622 | — (depressed; see below) |
+| mpsc (shared bounded-CAS claim) | 29.308 | 29.080 – 29.557 | 0.41x |
 
-v1 reference (`docs/bench-results/2026-08-06-bakeoff.md`, different session):
-mpsc 29.9, crossbeam 71.0.
+**The crossbeam figure in this table (51.649) is depressed and should not be
+used.** The follow-up investigation below settles crossbeam's figure on this
+box at **71.25 Melem/s**, and every ratio above is computed against that
+settled value, not against the depressed same-session figure. Using the
+same-session 51.649 would give 6.23x — a materially more flattering number
+that this crate declines to headline.
 
-This session's `mpsc` mid (29.308) lines up closely with the v1 reference
-(29.9). This session's `crossbeam` mid (51.649) does not — it is
-noticeably lower than the v1 reference (71.0), a ~27% difference between
-two sessions on the same box. Criterion's own within-run analysis for
-`bakeoff_mpsc/crossbeam` is tight (range spans ~4%, one high-severe
-outlier out of 100 samples), so this is not run-to-run noise within the
-session; it looks like session-to-session variance in crossbeam's
-measured throughput specifically. This does not change the gate outcome
-below — the sharded cell clears the decisive threshold by more than 2x
-against either crossbeam figure (51.649 or 71.0) — but it is a reason to
-treat any *absolute* crossbeam number from a single session with some
-caution, and it is the reason the brief requires re-measuring crossbeam
-in the same session as the cell being judged against it rather than
-reusing the v1 figure.
+## Follow-up: settling the crossbeam baseline (2026-08-08)
 
-Two checkable facts bear on what could explain the difference, rather than
-leaving it as an assumed "variance": `Cargo.lock` is tracked and unchanged
-since `9acfd76` (the v1 bake-off commit), so both sessions ran the same
-`crossbeam-channel 0.5.16` (v1 doc, `docs/bench-results/2026-08-06-bakeoff.md`
-line 38) — a dependency-version change is ruled out. `rust-toolchain.toml`
-pins `channel = "stable"` with no explicit version, so a stable Rust release
-landing between 2026-08-06 and 2026-08-07 is **not** ruled out. Separately,
-the v1 run measured all groups in a single pass (see
-`docs/bench-results/2026-08-06-bakeoff.md`), while this session's `cargo
-bench` invocation used a `--` name filter restricted to three groups (see
-Commands above); bench ordering and thermal context differed between the two
-sessions for reasons independent of any code or dependency change.
+The original run's crossbeam mid (51.649) disagreed with the v1 reference
+(71.0, `docs/bench-results/2026-08-06-bakeoff.md`) by ~27%, while `mpsc`
+reproduced closely (29.308 vs 29.9). Because crossbeam is the denominator of
+this crate's standing exit-ramp gate, that ambiguity was worth closing. Eight
+further measurements on a verified-quiet box (84–94% CPU idle, 0 runnable,
+0 blocked, no swap, steal 0):
+
+| Condition | crossbeam | sharded | mpsc |
+|---|---:|---:|---:|
+| isolated run 1 | **71.25** | — | — |
+| isolated run 2 | 67.65 | — | — |
+| isolated run 3 | 61.86 | — | — |
+| isolated run 4 | 30.09 | — | — |
+| combined run A | 69.89 | 321.22 | 30.19 |
+| combined run B | 67.79 | 321.22 | 31.55 |
+
+**Findings:**
+
+1. **crossbeam's settled figure is ~71 Melem/s** — the v1 reference was right
+   and the original run's 51.649 was depressed by transient interference. The
+   quiet-box cluster is 67.65–71.25.
+2. **`sharded` and `mpsc` are highly reproducible**: `sharded` measured 321.22
+   three separate times (spread <0.1%); `mpsc` sits at 29.3–31.6 (~7%).
+   crossbeam alone swings 30.09–71.25, a 2.4x spread.
+3. **The asymmetry is mechanistic, not noise.** `crossbeam-channel`'s array
+   flavor calls `backoff.snooze()` on its send and recv paths
+   (`crossbeam-channel-0.5.16/src/flavors/array.rs:207,298,351,411`), and
+   `snooze()` calls `std::thread::yield_now()`
+   (`crossbeam-utils/src/backoff.rs:218`). `ultima_rings` uses only
+   `std::hint::spin_loop()` — a PAUSE, never a yield. So crossbeam hands its
+   timeslice to whatever else is runnable and its throughput tracks how busy
+   the box is, while `ultima_rings` keeps its timeslice regardless.
+
+Two candidate confounders are now **ruled out**: `Cargo.lock` is tracked and
+unchanged since `9acfd76`, so both sessions ran the same `crossbeam-channel
+0.5.16`; and the installed toolchain is `rustc 1.96.0 (2026-05-25)`, dated
+two and a half months before either run, so a stable-channel release between
+2026-08-06 and 2026-08-07 could not have applied.
 
 ## What this does and does not show
 
@@ -88,27 +111,49 @@ read as one.
 - **`BusySpin` only, no `Park`.** `Park` mode would need a new N-way
   Dekker-style wake protocol at the sharded layer; the ecosystem bake-off's
   Park-parity requirement is untested by this cell.
+- **The comparison structurally favours `ultima_rings` on a busy box, and
+  this applies to every `ultima_rings`-vs-crossbeam number this crate
+  publishes — not just this one.** Per finding 3 above, crossbeam yields its
+  timeslice under contention while `ultima_rings` spins without yielding. On
+  a machine with other runnable work, crossbeam is penalised and
+  `ultima_rings` is not, so the measured ratio inflates with box load: the
+  same pair of cells gives 4.5x on a quiet box and would give ~10x on the
+  loaded one that produced the 30.09 crossbeam reading. Every ratio in this
+  document therefore uses crossbeam's **best** observed figure (71.25), which
+  is the least favourable choice for `ultima_rings` and the only defensible
+  one. A reader comparing these numbers against a *dedicated* benchmark box
+  should expect the gap to narrow, not widen.
+  Note this is a real behavioural difference with real consequences, not
+  purely a measurement artifact — a spinning consumer that never yields is
+  genuinely faster under load and genuinely worse for CPU-sharing
+  neighbours. `Backoff` and `Park` exist in this crate precisely for callers
+  who do not want that trade; neither is measured here.
 
 ## Verdict
 
 **Decisive: sharded measured 321.52 Melem/s, ≥ 142 Melem/s (2x crossbeam).**
 
-The sharded prototype's mid (321.52 Melem/s) clears the fixed 142 Melem/s
-decisive threshold by more than 2x, and is 6.23x this session's own
-crossbeam mid (51.649 Melem/s) — the relevant same-session comparison — or
-4.53x against the v1 reference's 71.0 Melem/s crossbeam figure, for a reader
-who anchors on that session instead. Every gate branch clears against either
-denominator. This also corroborates Task 3's `--quick` smoke figure
-(~320 Melem/s), though that number carried no evidentiary weight on its
-own; this controlled run is what makes the result trustworthy, and it
-comes out at essentially the same throughput.
+The sharded prototype clears the fixed 142 Melem/s decisive threshold by more
+than 2x, at **4.51x** crossbeam's settled 71.25 Melem/s. That ratio uses
+crossbeam's best observed figure — the least favourable denominator for
+`ultima_rings` — rather than the depressed same-session 51.649 that would
+have read 6.23x.
+
+The result is robust in a way the absolute crossbeam figure is not: `sharded`
+measured 321.22 Melem/s on three separate runs (spread <0.1%), and the gate
+clears against every crossbeam figure ever observed on this box, including
+the highest (71.25 → 4.51x). This also corroborates Task 3's `--quick` smoke
+figure (~320 Melem/s), though that number carried no evidentiary weight on
+its own.
 
 Next round designs the dynamic shard registry and the production type. See
 "What this does and does not show" above for what this number does not
 transfer to that next round.
 
-Separately, the wide gap between `mpsc` (29.308, 0.57x crossbeam) and
-`sharded` (321.52, 6.23x crossbeam) — a ~11x difference — is *consistent
+Separately, the wide gap between `mpsc` (29.308, 0.41x crossbeam's settled
+71.25) and `sharded` (321.52, 4.51x) — a ~11x difference between the two
+`ultima_rings` designs, which is unaffected by the crossbeam denominator
+since neither cell involves crossbeam — is *consistent
 with* the crate's account in `docs/design.md` §7 and §8 of where the v1
 MPSC's cost lives (CAS contention and availability-array false sharing under
 the shared claim). But this is not a controlled comparison, and the premise
