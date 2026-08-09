@@ -83,7 +83,7 @@ struct Slot<T> {
 
 `Shared<T>` loses `buf` and `avail`, gaining `slots: Box<[Slot<T>]>`.
 
-Six mechanical sites:
+Seven mechanical sites:
 
 | Site | Before | After |
 |---|---|---|
@@ -92,7 +92,12 @@ Six mechanical sites:
 | `Shared::drop` | `avail[slot].load` then `buf[slot]` drop | `slots[slot].round.load` then `.value` drop |
 | `try_send` publish | write `buf[i]`, store `avail[i]` | write `slots[i].value`, store `slots[i].round` |
 | `slot_published` | `avail[i].load` | `slots[i].round.load` |
+| `try_recv` value read | `buf[head & mask]` read | `slots[head & mask].value` read |
 | `drain` hot loop | `avail[slot].load`, `buf[slot]` read | `slots[slot].round.load`, `.value` read |
+
+(An earlier revision of this table said six and omitted `try_recv`'s value read.
+`try_recv` gets the round via `slot_published` but reads the payload directly,
+so it is a distinct site.)
 
 **No `align(64)`.** Slots stay packed. Aligning each slot to its own line is the
 padding experiment that already failed, and it would defeat the point.
