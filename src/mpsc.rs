@@ -5,8 +5,10 @@
 //! sequence claim is a **bounded CAS** — a producer claims `seq` only after
 //! proving `seq - head < cap` — so a claimed slot is always already free,
 //! `try_send` can fail without claiming, and a blocked sender holds nothing.
-//! Publish: slot write → `avail[slot] = seq >> shift` (Release; -1 = never),
+//! Publish: slot write → `slots[i].round = seq >> shift` (Release; -1 = never),
 //! where `shift = log2(cap)` — the round number, computed without a division.
+//! The round lives inside the slot beside its payload, so a publish or consume
+//! touches one cache line rather than two (see docs/design.md §8).
 //! The single consumer drains the contiguous published prefix and stores the
 //! shared head once per drain (Release).
 
@@ -18,10 +20,25 @@ use crate::notify::{Parker, WaiterList};
 use crate::wait::WaitStrategy;
 use crate::{TryRecvError, TrySendError, assert_cap};
 
+/// One ring slot: the availability round and its payload in a single struct, so
+/// that a publish or a consume touches ONE cache line rather than two.
+///
+/// `repr(C)` with `round` first is load-bearing, not decoration. It pins the
+/// round at offset 0, so for a large `T` whose value spans several lines the
+/// round still shares a line with the *start* of the value — which is what the
+/// consumer reads first. Reordering these fields, or adding `align(64)`,
+/// silently discards the only reason this type exists. (`align(64)` in
+/// particular was measured as the separate "padding" lever and rejected:
+/// docs/bench-results/2026-08-09-mpsc-perf-v2.md.)
+#[repr(C)]
+struct Slot<T> {
+    /// Published round number (`seq >> shift`); -1 = never published.
+    round: AtomicI64,
+    value: UnsafeCell<MaybeUninit<T>>,
+}
+
 pub(crate) struct Shared<T> {
-    buf: Box<[UnsafeCell<MaybeUninit<T>>]>,
-    /// Per-slot published round number (`seq >> shift`); -1 = never published.
-    avail: Box<[AtomicI64]>,
+    slots: Box<[Slot<T>]>,
     mask: usize,
     cap: usize,
     /// `log2(cap)`. The round number is `seq >> shift`, not `seq / cap`:
@@ -39,9 +56,10 @@ pub(crate) struct Shared<T> {
 }
 
 // SAFETY: each slot is written by exactly one claimer (CAS gives disjoint
-// sequences) before its Release avail-store, and read by the single consumer
-// after the matching Acquire load; the bounded claim guarantees the previous
-// occupant was consumed before the slot is rewritten. T: Send suffices.
+// sequences) before that slot's Release round-store, and read by the single
+// consumer after the matching Acquire load of the same slot's round; the
+// bounded claim guarantees the previous occupant was consumed before the slot
+// is rewritten. T: Send suffices.
 unsafe impl<T: Send> Send for Shared<T> {}
 unsafe impl<T: Send> Sync for Shared<T> {}
 
@@ -52,12 +70,12 @@ impl<T> Drop for Shared<T> {
         // hole ends it; nothing beyond a hole is reachable).
         let mut seq = self.head.0.load(Ordering::Acquire);
         loop {
-            let slot = seq & self.mask;
-            if self.avail[slot].load(Ordering::Acquire) != (seq >> self.shift) as i64 {
+            let slot = &self.slots[seq & self.mask];
+            if slot.round.load(Ordering::Acquire) != (seq >> self.shift) as i64 {
                 break;
             }
             // SAFETY: published and never consumed.
-            self.buf[slot].with_mut(|p| unsafe { (*p).assume_init_drop() });
+            slot.value.with_mut(|p| unsafe { (*p).assume_init_drop() });
             seq += 1;
         }
     }
@@ -66,17 +84,15 @@ impl<T> Drop for Shared<T> {
 /// Create a bounded MPSC ring. `cap` must be a positive power of two.
 pub fn channel<T: Send>(cap: usize, strategy: WaitStrategy) -> (Sender<T>, Receiver<T>) {
     assert_cap(cap);
-    let buf = (0..cap)
-        .map(|_| UnsafeCell::new(MaybeUninit::uninit()))
-        .collect::<Vec<_>>()
-        .into_boxed_slice();
-    let avail = (0..cap)
-        .map(|_| AtomicI64::new(-1))
+    let slots = (0..cap)
+        .map(|_| Slot {
+            round: AtomicI64::new(-1),
+            value: UnsafeCell::new(MaybeUninit::uninit()),
+        })
         .collect::<Vec<_>>()
         .into_boxed_slice();
     let shared = Arc::new(Shared {
-        buf,
-        avail,
+        slots,
         mask: cap - 1,
         cap,
         shift: {
@@ -145,13 +161,16 @@ impl<T: Send> Sender<T> {
                 Err(cur) => seq = cur,
             }
         }
+        let slot = &sh.slots[seq & sh.mask];
         // SAFETY: bounded claim — this slot's previous occupant was consumed;
         // CAS made us its unique writer for this round.
-        sh.buf[seq & sh.mask].with_mut(|p| unsafe {
+        slot.value.with_mut(|p| unsafe {
             (*p).write(v);
         });
-        // Release pairs with the consumer's Acquire load of avail.
-        sh.avail[seq & sh.mask].store((seq >> sh.shift) as i64, Ordering::Release);
+        // Release pairs with the consumer's Acquire load of this same slot's
+        // round — now one cache line rather than two.
+        slot.round
+            .store((seq >> sh.shift) as i64, Ordering::Release);
         if sh.strategy == WaitStrategy::Park {
             crate::atomic::fence(Ordering::SeqCst);
             sh.consumer_parker.wake();
@@ -212,7 +231,7 @@ impl<T: Send> Clone for Sender<T> {
 impl<T: Send> Receiver<T> {
     fn slot_published(&self, seq: usize) -> bool {
         let sh = &*self.shared;
-        sh.avail[seq & sh.mask].load(Ordering::Acquire) == (seq >> sh.shift) as i64
+        sh.slots[seq & sh.mask].round.load(Ordering::Acquire) == (seq >> sh.shift) as i64
     }
 
     /// Pop without blocking. Drains remaining items after all senders
@@ -231,7 +250,9 @@ impl<T: Send> Receiver<T> {
             }
         }
         // SAFETY: published (Acquire-observed) and consumed exactly once.
-        let v = sh.buf[self.head & sh.mask].with(|p| unsafe { (*p).assume_init_read() });
+        let v = sh.slots[self.head & sh.mask]
+            .value
+            .with(|p| unsafe { (*p).assume_init_read() });
         self.head += 1;
         sh.head.0.store(self.head, Ordering::Release);
         self.wake_producers();
@@ -294,8 +315,7 @@ impl<T: Send> Receiver<T> {
         let sh = &*self.shared;
         let mask = sh.mask;
         let shift = sh.shift;
-        let buf = &sh.buf;
-        let avail = &sh.avail;
+        let slots = &sh.slots;
         let mut count = 0usize;
         let start = self.head;
         let guard = PublishGuard {
@@ -305,13 +325,13 @@ impl<T: Send> Receiver<T> {
         };
         while count < max {
             let seq = *guard.head;
-            let slot = seq & mask;
-            // SAFETY: slot is within bounds; avail[slot] is initialized.
-            if avail[slot].load(Ordering::Acquire) != (seq >> shift) as i64 {
+            let slot = &slots[seq & mask];
+            // SAFETY: slot is within bounds; its round is initialized.
+            if slot.round.load(Ordering::Acquire) != (seq >> shift) as i64 {
                 break;
             }
             // SAFETY: as in try_recv.
-            let v = buf[slot].with(|p| unsafe { (*p).assume_init_read() });
+            let v = slot.value.with(|p| unsafe { (*p).assume_init_read() });
             *guard.head += 1;
             count += 1;
             f(v);
