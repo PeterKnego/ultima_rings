@@ -77,10 +77,14 @@ Only cap4096_p2 passes under both readings.
 So this check does not cleanly establish box stability on its own. Two things keep it from
 undermining the verdict, though:
 
-1. **The gate deltas dwarf both readings of block-to-block spread.** The colocated-vs-
-   baseline deltas are +15.45%, +14.59%, and +11.93% — several times larger than even the
-   largest A1-vs-A2 spread measured anywhere in this table (7.78%). Whatever is producing
-   the A1-to-A2 wobble, it is an order smaller than the effect the gate is measuring.
+1. **The gate deltas are larger than both readings of block-to-block spread.** The
+   colocated-vs-baseline deltas are +15.45%, +14.59%, and +11.93% — roughly 1.5x to 2x
+   larger than even the largest A1-vs-A2 spread measured anywhere in this table (7.78%; the
+   ratios are 11.93/7.78 ≈ 1.53x, 14.59/7.78 ≈ 1.87x, 15.45/7.78 ≈ 1.99x). The largest
+   A1-to-A2 wobble itself (cap1024_p4's +4.59%) is less than half the size of the smallest
+   gate delta (11.93/4.59 ≈ 2.6x smaller), so whatever is producing that wobble is a
+   several-fold smaller effect than the one the gate is measuring, not the same order of
+   magnitude.
 2. **The wobble is not monotonic across cells, which argues against a systematic drift.**
    cap1024_p4's A1-to-A2 change is *positive* (+4.59%) while cap1024_p2 and cap4096_p2's
    are both *negative* (-2.23%, -2.05%). A real box-wide drift (thermal throttling,
