@@ -123,12 +123,21 @@ read as one.
 - **Per-shard backpressure.** `mpsc` and crossbeam both provide a single
   global bound; with `channel(2, 1024)` a sharded producer sees `Full` at 512
   outstanding items even while the other shard sits empty.
-- **Fixed producer set / no `Sender: Clone`.** The spec itself names the
-  dynamic shard registry as "the expensive part," and none of it is measured
-  here. Sharper: if `Sender: Clone` is ever added and two producers land on
-  the same shard, the single-writer property that produces this whole result
-  is gone and a per-shard claim protocol comes back. 321.52 Melem/s is an
-  **upper bound** on what the production type can reach, not a promise of it.
+- **Fixed producer set / no `Sender: Clone`** — a precondition, not a gap.
+  **Updated 2026-08-09:** an earlier revision of this document called 321.52
+  Melem/s an "upper bound," on the reasoning that a future `Sender: Clone`
+  might land two producers on one shard and destroy the single-writer property
+  the result depends on. That caveat was conditional on a dynamic shard
+  registry which will not be built: the target workload fixes its producer set
+  at startup and keeps it for the channel's life, so one-writer-per-shard holds
+  **by construction** and this figure transfers to production use rather than
+  bounding it.
+  What survives is a precondition on the type, stated in `src/sharded.rs`'s
+  module docs: the performance comes *from* `Sender` not being `Clone`. Adding
+  `Clone` later would not be a small extension — it would have to keep one
+  writer per shard (a shard per clone, plus lifecycle and reaping) or forfeit
+  the result, since two writers on one ring reintroduce a per-shard claim
+  protocol. Nothing about that path is measured here.
 - **`BusySpin` only, no `Park`.** `Park` mode would need a new N-way
   Dekker-style wake protocol at the sharded layer; the ecosystem bake-off's
   Park-parity requirement is untested by this cell.

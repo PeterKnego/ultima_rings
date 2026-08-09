@@ -480,6 +480,40 @@ README) is the other.
 
 ## 9. Alternatives considered
 
+**Sharded SPSC — one private ring per producer, consumer round-robins.** The most
+structurally obvious alternative to a shared-claim MPSC, and the only entry in this section
+that was actually built and measured rather than reasoned about: it lives behind the
+`experimental-sharded` feature in `src/sharded.rs`, with results in
+`docs/bench-results/2026-08-07-sharded-mpsc.md`. Instead of many producers contending for
+one ring, each producer owns a private `src/spsc.rs` ring and the single consumer sweeps
+them with a sticky cursor. This deletes *both* costs §7 and §8 attribute the MPSC gap to —
+the bounded-CAS retry loop and the availability array's false sharing — in one move, since
+a single-writer ring needs neither a claim nor a shared `avail`. It also removes a
+head-of-line stall the shared-claim design has: a producer preempted between its claim and
+its `avail` store blocks delivery of every already-published item behind it, because
+`drain` must stop at the hole (`src/mpsc.rs:293`). Measured on a 4-core Linux VM at equal
+total buffered capacity: **321.5 Melem/s against this crate's own `mpsc` at 29.3 (~11×) and
+crossbeam-channel at 71.25 (4.51×).**
+
+`mpsc` nonetheless remains the crate's default MPSC, because the three things sharding
+gives up are exactly what a channel is usually expected to provide. **Global FIFO:** the
+CAS on `claim` linearizes all producers into one sequence and `drain` consumes the
+contiguous prefix, so delivery order *is* claim order across producers; sharding offers
+per-producer FIFO only, with cross-producer order an artifact of scan position.
+crossbeam-channel, flume and kanal all provide the global order. **A global bound:**
+`channel(1024)` means 1024 items total and `Full` means genuinely full, whereas sharding
+makes backpressure a producer-local property — one producer can block at `total/n` while
+other shards sit empty. **Cheap emptiness:** one Acquire load answers "is anything there"
+for `mpsc`, where sharding needs a full `n_shards` scan to conclude `Empty` or
+`Disconnected`.
+
+The design also carries a precondition rather than merely a limitation: its speed comes
+from one writer per ring, which holds because `sharded::Sender` is not `Clone` and the
+shard set is fixed at construction. Supporting dynamic producers would require a shard per
+clone (with the registry, lifecycle and reaping that implies) or forfeit the result. That
+work is not planned — the intended workload fixes its producer set at startup — so the
+measured figures describe the type as it exists rather than bounding a future version.
+
 **Vyukov per-slot stamps / packed state words** (crossbeam-channel's array flavor;
 thingbuf's `Core`). Both fold the "is this slot ready" signal into a single per-slot atomic
 that also encodes the claim/generation, rather than keeping a separate claim cursor and

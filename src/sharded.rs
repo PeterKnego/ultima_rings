@@ -15,6 +15,17 @@
 //! **Backpressure is per-shard.** With `channel(2, 1024)` a producer sees
 //! `Full` at 512 outstanding items even while the other shard sits empty.
 //!
+//! **`Sender` is not `Clone`, and that is the point.** The fixed shard set is
+//! what makes one-writer-per-shard structural, and one writer per ring is the
+//! entire source of the speed: no CAS, no retry loop, no contended line. This
+//! is a precondition of the design, not a missing feature — so adding `Clone`
+//! would not be a small extension. It would have to preserve one writer per
+//! shard (allocating a shard per clone, with the lifecycle and reaping that
+//! implies) or give up the result, because two writers on one ring reintroduce
+//! exactly the per-shard claim protocol this design exists to delete. The
+//! measured figures in `docs/bench-results/2026-08-07-sharded-mpsc.md` hold for
+//! the fixed set only.
+//!
 //! This module declares no atomics and contains no `unsafe`; every
 //! memory-ordering edge belongs to [`crate::spsc`], which `tests/loom.rs`
 //! already models. See

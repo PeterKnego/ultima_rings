@@ -16,9 +16,11 @@ pub enum WaitStrategy {
     /// `spin_loop()` until progress: lowest latency, one core per blocked side.
     BusySpin,
     /// Aeron-style idle ladder: spins, then yields, then timed parks doubling
-    /// [`PARK_MIN`] → [`PARK_MAX`]. Self-waking — the other side never needs
-    /// to notify. Lowest CPU of the self-waking strategies, at the cost of a
-    /// wake latency floored by the OS timer (see [`PARK_MIN`]).
+    /// 64 µs → 1 ms. Self-waking — the other side never needs to notify.
+    /// Lowest CPU of the self-waking strategies, at the cost of a wake latency
+    /// floored by the OS timer: the 64 µs floor is deliberate, because
+    /// `thread::park_timeout` cannot deliver sub-floor sleeps (a 1 µs request
+    /// measured ~60 µs on a 4-core Linux VM).
     Backoff,
     /// Spins, then yields **indefinitely** — never parks. Sits between
     /// [`WaitStrategy::BusySpin`] and [`WaitStrategy::Backoff`]: wake
