@@ -535,7 +535,98 @@ fn bakeoff_sharded_mpsc(c: &mut Criterion) {
     g.finish();
 }
 
-criterion_group!(bakeoff, bakeoff_spsc, bakeoff_mpsc);
+// ---------------------------------------------------------------------------
+// Park-mode MPSC bake-off. The other MPSC cells all drive the non-blocking
+// `try_*` API with a hand-rolled spin, so nothing there exercises either
+// crate's blocking path — a gap the v2 spec flagged
+// (docs/superpowers/specs/2026-08-07-mpsc-perf-v2-design.md). Here both sides
+// use blocking `send`/`recv`: ultima_rings under `WaitStrategy::Park` (which
+// parks via the notify layer and pays a SeqCst fence + wake per operation),
+// crossbeam-channel under its own blocking path. Same 2-producer
+// barrier-released harness, same BATCH, same 1024 capacity as `bakeoff_mpsc`.
+// ---------------------------------------------------------------------------
+
+fn bakeoff_park_mpsc(c: &mut Criterion) {
+    let mut g = c.benchmark_group("bakeoff_park_mpsc");
+    g.throughput(Throughput::Elements(BATCH));
+    g.bench_function("ultima_park", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (tx, mut rx) = mpsc::channel::<u64>(1024, WaitStrategy::Park);
+                let barrier = Arc::new(Barrier::new(3));
+                let mut handles = Vec::new();
+                for _ in 0..2 {
+                    let mut tx = tx.clone();
+                    let barrier = Arc::clone(&barrier);
+                    handles.push(thread::spawn(move || {
+                        barrier.wait();
+                        for i in 0..BATCH / 2 {
+                            if tx.send(i).is_err() {
+                                return;
+                            }
+                        }
+                    }));
+                }
+                drop(tx);
+                barrier.wait();
+                let t = Instant::now();
+                let mut got = 0u64;
+                while got < BATCH {
+                    match rx.recv() {
+                        Ok(_) => got += 1,
+                        Err(_) => break,
+                    }
+                }
+                total += t.elapsed();
+                for h in handles {
+                    h.join().unwrap();
+                }
+            }
+            total
+        })
+    });
+    g.bench_function("crossbeam_blocking", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (tx, rx) = crossbeam_channel::bounded::<u64>(1024);
+                let barrier = Arc::new(Barrier::new(3));
+                let mut handles = Vec::new();
+                for _ in 0..2 {
+                    let tx = tx.clone();
+                    let barrier = Arc::clone(&barrier);
+                    handles.push(thread::spawn(move || {
+                        barrier.wait();
+                        for i in 0..BATCH / 2 {
+                            if tx.send(i).is_err() {
+                                return;
+                            }
+                        }
+                    }));
+                }
+                drop(tx);
+                barrier.wait();
+                let t = Instant::now();
+                let mut got = 0u64;
+                while got < BATCH {
+                    match rx.recv() {
+                        Ok(_) => got += 1,
+                        Err(_) => break,
+                    }
+                }
+                total += t.elapsed();
+                for h in handles {
+                    h.join().unwrap();
+                }
+            }
+            total
+        })
+    });
+    g.finish();
+}
+
+criterion_group!(bakeoff, bakeoff_spsc, bakeoff_mpsc, bakeoff_park_mpsc);
 
 #[cfg(feature = "experimental-sharded")]
 criterion_group!(bakeoff_sharded, bakeoff_sharded_mpsc);
