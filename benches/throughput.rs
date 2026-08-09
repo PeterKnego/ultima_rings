@@ -628,13 +628,20 @@ fn bakeoff_park_mpsc(c: &mut Criterion) {
 
 // ---------------------------------------------------------------------------
 // Layout probe: the same MPSC workload across capacities and producer counts.
-// Exists to test whether an `avail`-array layout change generalizes or holds
-// only at one point. Padding trades false sharing for cache residency, and the
-// two scale opposite ways — padding's benefit grows with producer contention
-// while its cost grows with capacity (design.md §8 defends the compact layout
-// precisely on residency grounds). At cap 1024 an unpadded avail array is 8 KiB
-// and fits a typical L1d; padded it is 64 KiB and does not. At cap 4096 padded
-// it is 256 KiB.
+// Exists to test whether an MPSC hot-path layout change generalizes or holds
+// only at one point — the recurring lesson on this path is that a single
+// favorable cell is not evidence, only all three configurations agreeing is.
+//
+// Originally built to test padding the (then-separate) `avail` array to one
+// cache line per entry: padding trades false sharing for cache residency, and
+// the two scale opposite ways — benefit growing with producer contention,
+// cost growing with capacity. It held at cap 1024 (+2.0%) and failed at cap
+// 4096 (-0.1%), so it was rejected (docs/bench-results/2026-08-09-mpsc-perf-v2.md).
+//
+// Reused to test colocating the round with its payload (`avail` and the
+// payload buffer merged into one `slots: Box<[Slot<T>]>`, see design.md §8)
+// — this time it held at all three configurations (+11.9% to +15.5%) and was
+// kept (docs/bench-results/2026-08-09-colocated-slot.md).
 //
 // Filter-only by design: `cargo bench -- mpsc_layout_probe`.
 // ---------------------------------------------------------------------------
