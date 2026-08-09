@@ -88,20 +88,24 @@ measures `ultima_rings` `BusySpin` throughput head-to-head against `crossbeam-ch
 | MPSC (2 producers) | flume | 7.7 |
 | MPSC (2 producers) | kanal | 5.3 |
 
+**Provenance caveat:** these bake-off numbers predate the colocation change measured in
+`docs/design.md` §8 (merging the availability round into each slot with its payload, roughly
++12–15% on MPSC's own layout probe) — the bake-off itself has not been re-run since.
+
 SPSC leads `crossbeam-channel` by **~15.5×** and lands at parity with `rtrb` (also a
 minimal-overhead, wait-strategy-free lock-free SPSC ring); note that this crate's `drain`
 uses batched consumption while competitors single-pop, yet the single-pop `rtrb` result
 (626 Melem/s) is only 1% higher, so batching is not the headline's source. **MPSC currently
 trails `crossbeam-channel`, at ~0.42× its throughput** — under this 2-producer/4-core
-contention shape, crossbeam's `fetch_add` claim with a colocated per-slot stamp+payload
-beats this crate's bounded-CAS claim over a separate availability array. This is an
-accepted, documented trade for v1, not an oversight: the bounded claim buys correctness
-properties `fetch_add` structurally cannot (`try_send` can report `Full` without claiming
-a slot, and a blocked producer holds no unpublished hole for the consumer to reason about —
-see `docs/design.md` §7) at the cost of a CAS-retry loop plus the availability array's
-per-slot false sharing (`docs/design.md` §8); a batched claim (reserving a contiguous run
-of sequences per CAS instead of one at a time) is the identified v2 lever to close this
-gap. A reference implementation does not hide a lost benchmark.
+contention shape, crossbeam's `fetch_add` claim beats this crate's bounded-CAS claim; both
+designs now colocate their per-slot round/stamp with the payload (`docs/design.md` §8), so
+the gap traces to the claim mechanism itself, not to slot layout. This is an accepted,
+documented trade for v1, not an oversight: the bounded claim buys correctness properties
+`fetch_add` structurally cannot (`try_send` can report `Full` without claiming a slot, and a
+blocked producer holds no unpublished hole for the consumer to reason about — see
+`docs/design.md` §7) at the cost of a CAS-retry loop; a batched claim (reserving a
+contiguous run of sequences per CAS instead of one at a time) is the identified v2 lever to
+close this gap. A reference implementation does not hide a lost benchmark.
 
 ## Verification
 

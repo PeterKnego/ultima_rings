@@ -54,10 +54,10 @@ index pair `(head, tail)` *is* that flag.
 
 The MPSC ring (`src/mpsc.rs`) generalizes the producer side to N threads and replaces
 `tail` with two things: a **claim cursor** (`claim: AtomicUsize`, "next sequence to
-claim") and a **per-slot availability array** (`avail: Box<[AtomicI64]>`, one round
-number per slot, `-1` meaning "never published"). The consumer side (`head`) is unchanged
-from SPSC — there is still exactly one consumer, so `head` needs no CAS, only a plain
-load/store.
+claim") and a **per-slot round number colocated with its payload** (`slots: Box<[Slot<T>]>`,
+each `Slot<T>` holding `round: AtomicI64` beside its `value`, `-1` meaning "never
+published"). The consumer side (`head`) is unchanged from SPSC — there is still exactly
+one consumer, so `head` needs no CAS, only a plain load/store.
 
 The load-bearing invariant is the **bounded-CAS claim**: a producer's
 `compare_exchange_weak(seq, seq + 1, ...)` on `claim` is only attempted after the same
@@ -78,18 +78,19 @@ previous occupant is provably already consumed before the CAS that lets a new pr
 write into it succeeds** — the same "index pair proves the slot is safe to touch" argument
 as SPSC, just carried by `claim`/`head` instead of `tail`/`head`.
 
-The last piece is the wrap/ABA argument for the availability array. If `avail[slot]` were
-a plain boolean "ready" flag, a slow consumer could confuse round `r`'s publish with round
-`r - 1`'s stale flag after a full wrap. `ultima_rings` avoids this by storing the **round
-number itself** (`seq / cap`) rather than a boolean: the consumer's readiness check is not
-"is this slot marked ready" but "does `avail[slot]` equal *exactly* the round I am
-expecting" (`avail[seq & mask] == seq / cap`, in `Receiver::slot_published`). Rounds
-strictly increase per slot (each successive occupant of a given slot has a round exactly
-one greater than the last, since occupants of the same slot are `cap` sequences apart, and
-`(seq + cap) / cap == seq / cap + 1`), so a stale round-`r - 1` value in `avail[slot]` can
-never satisfy a round-`r` equality check — the consumer never mistakes a `r-1` leftover for
-a `r`-round publish. This is the standard Disruptor-style defense against the ABA problem
-that a single reused boolean would have.
+The last piece is the wrap/ABA argument for the round number colocated in each slot. If
+`slots[i].round` were a plain boolean "ready" flag, a slow consumer could confuse round
+`r`'s publish with round `r - 1`'s stale flag after a full wrap. `ultima_rings` avoids this
+by storing the **round number itself** (`seq >> shift`, with `shift = log2(cap)` cached at
+construction — see §7) rather than a boolean: the consumer's readiness check is not "is
+this slot marked ready" but "does `slots[seq & mask].round` equal *exactly* the round I am
+expecting" (`slots[seq & mask].round == seq >> shift`, in `Receiver::slot_published`).
+Rounds strictly increase per slot (each successive occupant of a given slot has a round
+exactly one greater than the last, since occupants of the same slot are `cap` sequences
+apart, and `(seq + cap) >> shift == (seq >> shift) + 1`), so a stale round-`r - 1` value in
+`slots[i].round` can never satisfy a round-`r` equality check — the consumer never mistakes
+a `r-1` leftover for a `r`-round publish. This is the standard Disruptor-style defense
+against the ABA problem that a single reused boolean would have.
 
 ## 2. Ordering table
 
@@ -103,8 +104,8 @@ that a single reused boolean would have.
 | spsc `disconnected` | load (`try_send`/`try_recv`/Park recheck) | Acquire | `disconnected` store Release | — |
 | mpsc `claim` | CAS (producer, `try_send`) | Relaxed / Relaxed | (nothing — see below) | Uniqueness of the claimed sequence only |
 | mpsc `claim` | load (producer, retry loop / Park recheck) | Relaxed | — | — |
-| mpsc `avail[slot]` | store (producer, `try_send`) | Release | `avail[slot]` load Acquire (consumer) | The slot write just performed |
-| mpsc `avail[slot]` | load (consumer, `slot_published`/`drain`/`Shared::drop`) | Acquire | `avail[slot]` store Release (producer) | — |
+| mpsc `slots[i].round` | store (producer, `try_send`) | Release | `slots[i].round` load Acquire (consumer) | The slot write just performed |
+| mpsc `slots[i].round` | load (consumer, `slot_published`/`drain`/`Shared::drop`) | Acquire | `slots[i].round` store Release (producer) | — |
 | mpsc `head` | store (consumer, `try_recv`/`drain`) | Release | `head` load Acquire (producer) | The slot as reusable |
 | mpsc `head` | load (producer, `try_send`/Park recheck) | Acquire | `head` store Release (consumer) | — |
 | mpsc `senders` | fetch_add (`Sender::clone`) | Relaxed | (part of the AcqRel RMW chain below) | — |
@@ -118,17 +119,19 @@ numbers to competing producers — it is a ticket dispenser, not a data channel.
 CAS's own total modification order on `claim` already guarantees two producers never
 win the same sequence (that's what compare-exchange *is*, regardless of ordering); no
 producer needs to observe *any other memory* as a side effect of winning the CAS, because
-the thing that actually publishes the slot's payload to the consumer is the `avail[slot]`
-Release store, done separately, after the winning producer has finished writing the slot.
-Ordering "rides entirely on `avail`," as the module doc puts it: the consumer never reads
-`claim` at all, so there is no cross-thread edge for the CAS's ordering to carry.
+the thing that actually publishes the slot's payload to the consumer is the
+`slots[i].round` Release store, done separately, after the winning producer has finished
+writing the slot. Ordering rides entirely on that round store, not on the claim CAS: the
+consumer never reads `claim` at all, so there is no cross-thread edge for the CAS's
+ordering to carry.
 
-**Why `head` loads on the producer side and `tail`/`avail` loads on the consumer side are
-Acquire, not Relaxed.** These are the one genuine cross-thread edges in each direction:
-the producer's `head` load must see the consumer's prior `head` Release-store (so the
-full-check reflects real progress, not a stale view that could let a claim/write race an
-unconsumed slot); the consumer's `tail`/`avail` load must see the producer's prior
-Release-store (so `assume_init_read` never races the `write` that produced the value).
+**Why `head` loads on the producer side and `tail`/`slots[i].round` loads on the consumer
+side are Acquire, not Relaxed.** These are the one genuine cross-thread edges in each
+direction: the producer's `head` load must see the consumer's prior `head` Release-store
+(so the full-check reflects real progress, not a stale view that could let a claim/write
+race an unconsumed slot); the consumer's `tail`/`slots[i].round` load must see the
+producer's prior Release-store (so `assume_init_read` never races the `write` that
+produced the value).
 
 **Why `senders`'s `fetch_sub` is `AcqRel` on every decrement, not just the last one.**
 The textbook `Arc`-drop optimization uses `Release` for every decrement and pays the
@@ -140,7 +143,7 @@ decrement's *acquire* half synchronizes-with whatever wrote the value it read �
 either an earlier `AcqRel` decrement's *release* half, or the initial `senders = 1` store.
 The result is a transitive happens-before chain through every sender's own drop, so the
 receiver's plain `Acquire` load observing the count reach `0` happens-after not just the
-*last* dropping sender's own final `avail` publish, but (transitively, through the chain)
+*last* dropping sender's own final round publish, but (transitively, through the chain)
 every earlier sender's final publish too. It is more conservative than the classic
 optimization (every decrement pays the acquire cost, not just the last), but it is paid
 on the cold `Drop` path, once per producer's lifetime — not the hot send path — so the
@@ -166,15 +169,15 @@ empty/full):
    registers its `Thread` handle.
 2. `fence(SeqCst)`.
 3. **Re-check the ring's real state** (an `Acquire` load of the condition atomic —
-   `tail`/`head`/`avail`/`disconnected`/`senders`, depending on caller).
+   `tail`/`head`/`slots[i].round`/`disconnected`/`senders`, depending on caller).
 4. If the re-check now shows progress, `cancel()` (withdraw the registration) and retry the
    op instead of parking. Otherwise, call `park()`.
 
 The waker (a thread that just published data, freed a slot, or is tearing the channel
 down):
 
-1. Publish the change (the slot write + the `Release` store of `tail`/`head`/`avail`, or
-   the `Release` store of `disconnected`/`rx_dropped`).
+1. Publish the change (the slot write + the `Release` store of `tail`/`head`/`slots[i].round`,
+   or the `Release` store of `disconnected`/`rx_dropped`).
 2. `fence(SeqCst)`.
 3. **Check the "is anyone parked" flag** (`Parker::wake` does a `Relaxed` load;
    `WaiterList::wake_all` does a `Relaxed` swap, an RMW whose read carries the same
@@ -298,7 +301,7 @@ silently — no message is ever swallowed by a racing disconnect on the send sid
 
 **MPSC, all-senders-drop direction.** Same shape, over the `senders` counter instead of a
 boolean: the transitive `AcqRel` chain described in §2 guarantees that the receiver's
-`Acquire` load observing `senders == 0` happens-after every sender's own final `avail`
+`Acquire` load observing `senders == 0` happens-after every sender's own final round
 publish. `try_recv`'s disconnect branch mirrors SPSC's: after seeing `senders == 0`, it
 re-checks `slot_published(self.head)` once more before concluding `Disconnected`, so a
 message published concurrently with the last sender's drop is still drained, not lost.
@@ -337,21 +340,21 @@ read (by `try_recv`/`drain`): every index in that range is guaranteed initialize
 advances *after* the read.
 
 **MPSC** is the same idea over the contiguous published prefix rather than a plain range:
-starting from `head`, `Shared::drop` walks forward while `avail[slot] == seq / cap` holds,
-dropping each such slot, and **stops at the first sequence where that equality fails** —
-that failure is precisely how a claimed-but-never-published slot (a "hole") is detected and
-safely handled. In the current code every `try_send` call that wins its CAS goes on to
-write and publish unconditionally (there is no early-return between claiming and
+starting from `head`, `Shared::drop` walks forward while `slots[slot].round == seq >> shift`
+holds, dropping each such slot, and **stops at the first sequence where that equality
+fails** — that failure is precisely how a claimed-but-never-published slot (a "hole") is
+detected and safely handled. In the current code every `try_send` call that wins its CAS
+goes on to write and publish unconditionally (there is no early-return between claiming and
 publishing), so no hole can actually occur on the paths that exist today — but the design
-does not *rely* on that being true to stay sound. The `avail[slot] == seq/cap` check is the
-single source of truth for "is this sequence actually present," checked independently at
-every read site (`try_recv`, `drain`, and this cleanup walk); a hole, if one ever existed
-(say, from a future amendment where a claim could be abandoned), would simply make the
-prefix-scan stop one sequence early, leaving that one slot's uninitialized memory
-untouched — never read, never dropped, never double-freed. The claim cursor and the
-availability array are deliberately two separate observables specifically so that "claimed"
-and "published" are independently checkable, and every consumer of the ring (the live
-`Receiver` and the terminal `Shared::drop` walk alike) only ever trusts the latter.
+does not *rely* on that being true to stay sound. The `slots[slot].round == seq >> shift`
+check is the single source of truth for "is this sequence actually present," checked
+independently at every read site (`try_recv`, `drain`, and this cleanup walk); a hole, if
+one ever existed (say, from a future amendment where a claim could be abandoned), would
+simply make the prefix-scan stop one sequence early, leaving that one slot's uninitialized
+memory untouched — never read, never dropped, never double-freed. The claim cursor and each
+slot's round number are deliberately two separate observables specifically so that
+"claimed" and "published" are independently checkable, and every consumer of the ring (the
+live `Receiver` and the terminal `Shared::drop` walk alike) only ever trusts the latter.
 
 **The `PublishGuard` RAII (both rings' `drain`).** `drain(max, f)` calls `f` once per
 consumed item, and `f` is caller-supplied — it can panic. If it does, the function must
@@ -414,9 +417,9 @@ erasing a const-generic capacity can reintroduce `__aeabi_uidivmod` calls in the
 Slot indexing is therefore division-free by construction.
 
 **The availability-round division — resolved in v2, and it changed nothing measurable.**
-MPSC's per-slot availability array stores round numbers (see §1) to detect wrap-around
-without an ABA problem, computed on the publish path (every `try_send`) and the consume path
-(every `try_recv`/`drain`). Through v1 this was `seq / cap`, and because `cap` is a runtime
+MPSC's per-slot round number, colocated with its payload in `Slot<T>` (see §1), detects
+wrap-around without an ABA problem, computed on the publish path (every `try_send`) and the
+consume path (every `try_recv`/`drain`). Through v1 this was `seq / cap`, and because `cap` is a runtime
 field the compiler could not strength-reduce it: it executed as a hardware division on both
 producer and consumer. v2 replaced it with `seq >> shift`, where `shift = log2(cap)` is
 cached at construction (`assert_cap` guarantees the power of two, and a `debug_assert` pins
@@ -431,7 +434,7 @@ hot path is dominated by cross-core traffic rather than ALU work, and evidence a
 expecting further arithmetic micro-optimisation to move this design.
 
 **What stayed byte-equivalent.** The actual publish/consume edges — SPSC's `tail`
-Release/`head` Acquire pair, and MPSC's `avail[slot] = seq / cap` Release/Acquire
+Release/`head` Acquire pair, and MPSC's `slots[i].round = seq >> shift` Release/Acquire
 round-encoding — are unchanged from the bench cells. Only the *claim* mechanism (MPSC) and
 the *indexing arithmetic* (both rings) changed; what "published" means to a consumer, and
 the wire-level protocol between producer and consumer, is identical to what the AWS numbers
@@ -460,47 +463,67 @@ strategy: the entire cost of "did my peer make progress" is paid by the blocked 
 polling on a timer, never by the productive thread being asked to additionally notify
 anyone.
 
-**The false-sharing reality of the interleaved availability array.** `avail` is a flat
-`Box<[AtomicI64]>`, 8 bytes per slot, laid out contiguously with **no per-slot padding** —
-unlike `claim`/`head` (both individually `CachePadded` to their own 64-byte line), eight
-consecutive slots of `avail` share one cache line. Under sustained multi-producer
-contention, producers claiming adjacent sequences (the common case, since the claim cursor
-hands out consecutive integers) publish to `avail` entries that live on the same cache
-line, so their Release-stores contend for that line the same way false-sharing always
-does — this is a real, structural cost of keeping the availability array compact rather
-than padding every slot to its own line (which would cost 64 bytes per ring slot instead
-of 8, an 8× memory blow-up for a structure whose entire value proposition is being a
-small, cache-resident array). `ultima_rings` does not pad it, and does not claim to: this
-layout is carried over unchanged from the `hi-perf-cmp` bench cell the AWS numbers in the
-README measure (9.4 M ops/s, p50 277 ns, 2-producer MPSC on `c6id.2xlarge`) — so whatever
-cache-line contention this causes is already priced into that measured number, not an
-unmeasured risk the port introduced. It is also a plausible partial contributor (alongside
-the CAS-retry cost from §7) to the MPSC bake-off result documented in the README (§ below):
-`ultima_rings`' bounded-CAS MPSC currently trails `crossbeam-channel`'s `fetch_add`+colocated-
-stamp design under the bake-off's specific 2-producer/4-core contention shape, though this
-document does not claim to have isolated false sharing as the dominant cause versus the CAS
-retry cost — both are real, neither has been measured in isolation.
+**The false-sharing motivation for colocating the round with its payload (v1's layout).**
+Through v1, the availability round lived in a separate flat `avail: Box<[AtomicI64]>`, 8
+bytes per slot, laid out contiguously with **no per-slot padding** — unlike `claim`/`head`
+(both individually `CachePadded` to their own 64-byte line), eight consecutive slots of
+`avail` shared one cache line, and every publish additionally touched the payload buffer's
+own, physically separate cache line. Under sustained multi-producer contention, producers
+claiming adjacent sequences (the common case, since the claim cursor hands out consecutive
+integers) published to `avail` entries that lived on the same cache line, so their
+Release-stores contended for that line the way false sharing always does — on top of the
+separate line each write to the payload buffer touched. That two-array layout was carried
+over unchanged from the `hi-perf-cmp` bench cell the AWS numbers in the README measure
+(9.4 M ops/s, p50 277 ns, 2-producer MPSC on `c6id.2xlarge`), so whatever cache-line traffic
+it caused was already priced into that measured number, not an unmeasured risk the port
+introduced. It was also a plausible partial contributor (alongside the CAS-retry cost from
+§7) to the MPSC bake-off result documented in the README: `ultima_rings`' bounded-CAS MPSC
+trails `crossbeam-channel`'s `fetch_add`+colocated-stamp design under the bake-off's
+specific 2-producer/4-core contention shape — this section does not claim to have isolated
+either cost as dominant versus the other, both are real, and the bake-off numbers predate
+the colocation change below.
 
-**v2 measured the padding, and rejected it.** Padding `avail` to one 64-byte line per entry
-was the concrete lever named here for paying this cost down. It was implemented and measured
-(`docs/bench-results/2026-08-09-mpsc-perf-v2.md`), and the result did not survive contact
-with a second configuration: **+3.5% at cap 1024 / 2 producers in a single cell, +2.0% for
-the same shape in a different harness, and −0.1% at cap 4096** — nothing at all. The cause is
-visible in the trade itself: padding buys freedom from false sharing at the price of cache
-residency, and the two scale in opposite directions. Unpadded, `avail` at cap 1024 is 8 KiB
-and fits a typical 32–48 KiB L1d; padded it is 64 KiB and does not; at cap 4096 padded it is
-256 KiB, and the residency cost cancels the false-sharing benefit exactly. The memory price
-was `cap × 64 B` — an 8× blow-up on the array and ~4.5× on the whole channel — so the code
-was reverted and the compact layout stands, now on a measurement rather than only on the
-argument above.
+**v2 measured padding the two-array layout, and rejected it.** Padding `avail` to one
+64-byte line per entry was the first concrete lever tried against the cost above. It was
+implemented and measured (`docs/bench-results/2026-08-09-mpsc-perf-v2.md`), and the result
+did not survive contact with a second configuration: **+3.5% at cap 1024 / 2 producers in a
+single cell, +2.0% for the same shape in a different harness, and −0.1% at cap 4096** —
+nothing at all. The cause is visible in the trade itself: padding buys freedom from false
+sharing at the price of cache residency, and the two scale in opposite directions.
+Unpadded, `avail` at cap 1024 was 8 KiB and fit a typical 32–48 KiB L1d; padded it was 64
+KiB and did not; at cap 4096 padded it was 256 KiB, and the residency cost canceled the
+false-sharing benefit exactly. The memory price was `cap × 64 B` — an 8× blow-up on the
+array and ~4.5× on the whole channel — so the padding was reverted.
 
-That outcome also weakens this section's own attribution. If false sharing on `avail` were a
-dominant cost, removing it entirely would have shown more than +2.0% at the configuration
-where it should help most; and §7's division removal produced no measurable change either.
-Neither of the two costs §7 and §8 name for the MPSC gap has been shown to matter much, so
-**the dominant cost remains unidentified** — an honest open question, not a solved one. A
-batched claim (see README) is the remaining untried lever for this design; `src/sharded.rs`
-(§9) is the answer for callers who can give up global FIFO.
+**Colocation measured, and kept — the second lever tried against the same cost, and the
+first to clear its gate.** Rather than padding the existing two-array layout, the round and
+its payload were merged into one `slots: Box<[Slot<T>]>`, so a publish or consume touches a
+single cache line instead of two (§1, §2). This attacks the same cost by a different route
+than padding: it halves the number of cache lines a publish touches rather than spreading
+one array's entries apart. Adjacent producers still share a line — four `Slot<u64>`s per
+line rather than eight `avail` entries — so this reduces per-publish line traffic without
+eliminating false sharing between neighbouring sequences. Unlike padding, it does not add
+memory (no per-round padding, no residency trade-off that scales against capacity) — it
+removes a second array's cache-line traffic from the hot path entirely. Measured in
+interleaved A-B-A blocks against all three `mpsc_layout_probe` configurations, six colocated
+runs against three baseline runs per cell
+(`docs/bench-results/2026-08-09-colocated-slot.md`): **cap1024_p2 +15.45%, cap4096_p2
++14.59%, cap1024_p4 +11.93%** — every cell cleared its own run-to-run spread, by 1.3× to
+4.5×, and no single baseline run overlapped any colocated run in any cell. Unlike padding,
+the improvement held at every capacity and producer count tested — the residency trade that
+killed padding at cap 4096 does not apply here, because colocation reduces total cache-line
+traffic instead of redistributing one array's footprint.
+
+This is the first of the three MPSC layout/arithmetic hypotheses tried on this path
+(§7's division removal, padding above, and colocation) to clear an all-cells gate; §7's
+division removal produced no measurable change, and padding cleared only a single-cell gate
+before failing at a second configuration. Colocation does not, on its own, resolve the MPSC
+bake-off gap against `crossbeam-channel` — the CAS-retry claim cost from §7 remains
+untouched, and the bake-off numbers above predate this change — but it is real, reproducible
+evidence that per-publish cache-line traffic was a measurable part of the MPSC hot-path
+cost, where arithmetic and array padding were not. A batched claim (see README) remains the
+only untried lever for the claim-side cost; `src/sharded.rs` (§9) remains the answer for
+callers who can give up global FIFO.
 
 ## 9. Alternatives considered
 
@@ -511,11 +534,12 @@ that was actually built and measured rather than reasoned about: it lives behind
 `docs/bench-results/2026-08-07-sharded-mpsc.md`. Instead of many producers contending for
 one ring, each producer owns a private `src/spsc.rs` ring and the single consumer sweeps
 them with a sticky cursor. This deletes *both* costs §7 and §8 attribute the MPSC gap to —
-the bounded-CAS retry loop and the availability array's false sharing — in one move, since
-a single-writer ring needs neither a claim nor a shared `avail`. It also removes a
-head-of-line stall the shared-claim design has: a producer preempted between its claim and
-its `avail` store blocks delivery of every already-published item behind it, because
-`drain` must stop at the hole (`src/mpsc.rs:293`). Measured on a 4-core Linux VM at equal
+the bounded-CAS retry loop and the round's cross-producer cache-line traffic — in one move,
+since a single-writer ring needs neither a claim nor a shared round at all (not even the
+colocated one §8 now measures a gain from). It also removes a head-of-line stall the
+shared-claim design has: a producer preempted between its claim and its round store blocks
+delivery of every already-published item behind it, because
+`drain` must stop at the hole (`src/mpsc.rs:330`). Measured on a 4-core Linux VM at equal
 total buffered capacity: **321.5 Melem/s against this crate's own `mpsc` at 29.3 (~11×) and
 crossbeam-channel at 71.25 (4.51×).**
 
@@ -540,19 +564,32 @@ measured figures describe the type as it exists rather than bounding a future ve
 
 **Vyukov per-slot stamps / packed state words** (crossbeam-channel's array flavor;
 thingbuf's `Core`). Both fold the "is this slot ready" signal into a single per-slot atomic
-that also encodes the claim/generation, rather than keeping a separate claim cursor and
-availability array. This is more compact (one atomic touched per slot instead of two
-logically-separate structures) and gives crossbeam a clean MPMC design, but it couples
+that *also encodes the claim/generation*, rather than keeping a separate claim cursor and a
+per-slot round. This is more compact (one atomic touched per slot instead of two
+logically-separate observables) and gives crossbeam a clean MPMC design, but it couples
 readiness to the writer's own CAS target: thingbuf's `push_ref` has to detect and skip a
 slot a lingering reader still holds (its `HAS_READER` bit), and that exact coupling is
 implicated in two open, unresolved correctness issues in thingbuf's own tracker (#98,
 self-requeue invariant violation under a plain pop-then-repush workload; #100, hang/crash
 closing the channel while a slot guard is live) — see the thingbuf survey. `ultima_rings`
-keeps the claim cursor and the availability array as two independent observables
-specifically so that a genuinely single-consumer design (no reader ever "lingers" on a
-slot the way an MPMC consumer might) never needs that skip-logic at all, at the cost of one
-extra array and the false-sharing profile discussed in §8 rather than a single per-slot
-word.
+keeps the claim cursor and each slot's round as two independent observables specifically so
+that a genuinely single-consumer design (no reader ever "lingers" on a slot the way an MPMC
+consumer might) never needs that skip-logic at all, at the cost of one extra field per slot
+and the (now measurably reduced, §8) cache-line-traffic profile of touching it separately
+from the claim cursor, rather than a single per-slot word that would fold the two together.
+
+**Layout vs. protocol — what this crate does and does not couple.** §8's colocation change
+(the round moved into `Slot<T>` beside the payload) and the Vyukov/thingbuf design just
+described can look similar from a distance — both put more than one thing "in the slot" —
+but they are different axes. Colocating the round with the *payload* is a **layout**
+change: which cache line a byte lives on, with no effect on what the round means or who is
+allowed to write it. Folding readiness into an atomic that *also encodes the claim* (the
+Vyukov/crossbeam/thingbuf shape) is a **protocol** change: it changes which write makes a
+slot both claimed and ready in one step, and is exactly the coupling responsible for
+thingbuf's #98/#100. `ultima_rings` colocates on the layout axis (§8, measured, kept) but
+has never adopted, and does not propose, folding the claim into the round's atomic — the
+claim cursor and each slot's round remain two independent writes with two independent
+meanings, only their *storage location* moved.
 
 **kanal's direct cross-stack transfer.** kanal's fast path (for small/rendezvous payloads)
 writes the value directly into a `KanalPtr` pointing into the *receiving thread's own stack
@@ -597,7 +634,7 @@ lane) that covers it.
 | Combinator/adapter surface as a distinct attack surface (kanal #63) | A convenience wrapper (stream/iterator adapter) over an already-sound core reintroduces a bug the core doesn't have | `drain`'s `PublishGuard` (§6) is exactly this class of concern pre-empted: a batch/adapter-shaped API (`drain(max, f)`, the closest thing this crate has to a combinator) is independently panic-safety-audited, not merely assumed sound because the single-item `try_recv` path is |
 | rtrb's publish-before-drop rule (issue #185, open upstream) | A chunk/batch commit drops consumed slots *before* advancing the published index, so a panicking `Drop` mid-batch leaves the index stale and the same slots get dropped again on the next read | `PublishGuard` (§6) advances the shared `head` to reflect exactly what was consumed **via its own `Drop` impl, which runs on the unwind path too** — the index update and the "how much was actually taken" bookkeeping can never desynchronize, whether `f` panics or not; this was designed in from `drain`'s introduction (Task 2/4), specifically to avoid reproducing rtrb's still-open bug |
 | `Arc::strong_count` trap (rtrb issue #114) | Relying on another type's undocumented/incidental synchronization behavior (here, `Arc::strong_count`'s ordering) for a correctness invariant, which broke when that behavior changed upstream | `ultima_rings` never inspects `Arc::strong_count`; disconnect/liveness tracking is entirely the crate's own explicit atomics (`disconnected`, `rx_dropped`, `senders`) with orderings documented in §2 and argued in §5 — no dependency on any other type's incidental guarantees |
-| heapless's division-regression class (issue #650) | Type-erasing a capacity that was compile-time-constant silently reintroduces a runtime division in the hot index-update path | Both rings' slot indexing uses `seq & (cap - 1)`, never `%` (§7) — the `AND` cannot lower to a division regardless of whether `cap` is compile-time-constant, so the *index* update path is structurally division-free. However, MPSC's availability-round computation (`seq / cap`) does execute as a runtime division on the hot publish/consume path (a known v1 cost, noted in §7); the v2 optimization is precomputed shifts. |
+| heapless's division-regression class (issue #650) | Type-erasing a capacity that was compile-time-constant silently reintroduces a runtime division in the hot index-update path | Both rings' slot indexing uses `seq & (cap - 1)`, never `%` (§7) — the `AND` cannot lower to a division regardless of whether `cap` is compile-time-constant, so the *index* update path is structurally division-free. MPSC's availability-round computation is likewise division-free: the round is computed as `seq >> shift`, with `shift = log2(cap)` cached at construction (`assert_cap` guarantees the power of two), not `seq / cap` — the v2 optimization described in §7. |
 
 ## 11. Future layering note
 
