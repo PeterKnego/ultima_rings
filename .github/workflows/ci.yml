@@ -20,11 +20,15 @@ jobs:
       - run: cargo test --all-features
 
   test-arm:
-    # Weak-memory hardware lane: same tests on aarch64.
+    # Weak-memory hardware lane: same tests on aarch64, where a missing or
+    # too-weak ordering shows up that x86's stronger model hides. Both feature
+    # configurations run here — `sharded` composes `spsc`'s Release/Acquire
+    # edges, so this is the lane most likely to catch a problem with it.
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
       - run: cargo test
+      - run: cargo test --all-features
 
   loom:
     runs-on: ubuntu-latest
