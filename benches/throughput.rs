@@ -626,7 +626,85 @@ fn bakeoff_park_mpsc(c: &mut Criterion) {
     g.finish();
 }
 
-criterion_group!(bakeoff, bakeoff_spsc, bakeoff_mpsc, bakeoff_park_mpsc);
+// ---------------------------------------------------------------------------
+// Layout probe: the same MPSC workload across capacities and producer counts.
+// Exists to test whether an `avail`-array layout change generalizes or holds
+// only at one point. Padding trades false sharing for cache residency, and the
+// two scale opposite ways — padding's benefit grows with producer contention
+// while its cost grows with capacity (design.md §8 defends the compact layout
+// precisely on residency grounds). At cap 1024 an unpadded avail array is 8 KiB
+// and fits a typical L1d; padded it is 64 KiB and does not. At cap 4096 padded
+// it is 256 KiB.
+//
+// Filter-only by design: `cargo bench -- mpsc_layout_probe`.
+// ---------------------------------------------------------------------------
+
+fn mpsc_layout_probe(c: &mut Criterion) {
+    let mut g = c.benchmark_group("mpsc_layout_probe");
+    g.throughput(Throughput::Elements(BATCH));
+    for (cap, producers) in [(1024usize, 2usize), (4096, 2), (1024, 4)] {
+        g.bench_function(format!("cap{cap}_p{producers}"), |b| {
+            b.iter_custom(|iters| {
+                let mut total = std::time::Duration::ZERO;
+                for _ in 0..iters {
+                    let (tx, mut rx) = mpsc::channel::<u64>(cap, WaitStrategy::BusySpin);
+                    let barrier = Arc::new(Barrier::new(producers + 1));
+                    let per = BATCH / producers as u64;
+                    let mut handles = Vec::new();
+                    for _ in 0..producers {
+                        let mut tx = tx.clone();
+                        let barrier = Arc::clone(&barrier);
+                        handles.push(thread::spawn(move || {
+                            barrier.wait();
+                            for i in 0..per {
+                                let mut v = i;
+                                loop {
+                                    match tx.try_send(v) {
+                                        Ok(()) => break,
+                                        Err(TrySendError::Full(b)) => {
+                                            v = b;
+                                            std::hint::spin_loop();
+                                        }
+                                        Err(TrySendError::Disconnected(_)) => return,
+                                    }
+                                }
+                            }
+                        }));
+                    }
+                    drop(tx);
+                    barrier.wait();
+                    let t = Instant::now();
+                    let target = per * producers as u64;
+                    let mut got = 0u64;
+                    loop {
+                        match rx.try_recv() {
+                            Ok(_) => got += 1,
+                            Err(TryRecvError::Empty) => std::hint::spin_loop(),
+                            Err(TryRecvError::Disconnected) => break,
+                        }
+                        if got == target {
+                            break;
+                        }
+                    }
+                    total += t.elapsed();
+                    for h in handles {
+                        h.join().unwrap();
+                    }
+                }
+                total
+            })
+        });
+    }
+    g.finish();
+}
+
+criterion_group!(
+    bakeoff,
+    bakeoff_spsc,
+    bakeoff_mpsc,
+    bakeoff_park_mpsc,
+    mpsc_layout_probe
+);
 
 #[cfg(feature = "experimental-sharded")]
 criterion_group!(bakeoff_sharded, bakeoff_sharded_mpsc);
