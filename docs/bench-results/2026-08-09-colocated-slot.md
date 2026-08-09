@@ -27,6 +27,16 @@ rebuilding again for A2. No other file was touched at any point; `benches/throug
 was committed and identical across all nine runs. The tree was clean (`git status`) both
 before Block B's substitution and after A2's restoration.
 
+**Acknowledged residual limitation.** The colocated arm was built twice (A1 and A2, which
+agree with each other); the baseline arm was built only once. Code-layout/alignment luck
+within a single binary is a known few-percent microbenchmark confounder, and it is the one
+thing this A-B-A structure does not cross-check for the baseline arm specifically — A-B-A
+guards against drift *between* blocks, not against a one-off layout artifact *within* a
+single build. At a 12–15% effect size, and with zero overlap between every baseline run and
+every colocated run in every cell, it is very unlikely to be the explanation, but it has not
+been ruled out by a second baseline build and is recorded here as a limitation rather than
+re-tested (no re-run was performed for this).
+
 Box quietness (`vmstat 2 3`, checked before each block, never overlapping a build):
 
 | Before | idle % | runnable |
@@ -79,8 +89,8 @@ undermining the verdict, though:
 
 1. **The gate deltas are larger than both readings of block-to-block spread.** The
    colocated-vs-baseline deltas are +15.45%, +14.59%, and +11.93% — roughly 1.5x to 2x
-   larger than even the largest A1-vs-A2 spread measured anywhere in this table (7.78%; the
-   ratios are 11.93/7.78 ≈ 1.53x, 14.59/7.78 ≈ 1.87x, 15.45/7.78 ≈ 1.99x). The largest
+   larger than even the largest within-block spread measured anywhere in this table (7.78%;
+   the ratios are 11.93/7.78 ≈ 1.53x, 14.59/7.78 ≈ 1.87x, 15.45/7.78 ≈ 1.99x). The largest
    A1-to-A2 wobble itself (cap1024_p4's +4.59%) is less than half the size of the smallest
    gate delta (11.93/4.59 ≈ 2.6x smaller), so whatever is producing that wobble is a
    several-fold smaller effect than the one the gate is measuring, not the same order of
@@ -124,8 +134,8 @@ run-to-run spread.
 
 Every baseline run in every cell is lower than every colocated run in that same cell — the
 two distributions do not overlap at all, unlike the padding round's single-cell +3.5% that
-was inside noise once a second configuration was tried. All three cells pass by a wide,
-unambiguous margin.
+was inside noise once a second configuration was tried. All three cells pass by 1.3× to
+4.5× their own spread, with zero distribution overlap.
 
 ## Verdict
 

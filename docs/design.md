@@ -498,18 +498,21 @@ array and ~4.5× on the whole channel — so the padding was reverted.
 **Colocation measured, and kept — the second lever tried against the same cost, and the
 first to clear its gate.** Rather than padding the existing two-array layout, the round and
 its payload were merged into one `slots: Box<[Slot<T>]>`, so a publish or consume touches a
-single cache line instead of two (§1, §2). This removes the false-sharing cost named above
-by a different route than padding: it does not add memory the way padding did (no per-round
-padding, no residency trade-off that scales against capacity), it removes a second array's
-cache-line traffic from the hot path entirely. Measured in interleaved A-B-A blocks against
-all three `mpsc_layout_probe` configurations, six colocated runs against three baseline runs
-per cell (`docs/bench-results/2026-08-09-colocated-slot.md`): **cap1024_p2 +15.45%,
-cap4096_p2 +14.59%, cap1024_p4 +11.93%** — every cell cleared its own run-to-run spread by a
-wide margin (the smallest margin, cap1024_p4, still beat its 9.08% spread by the delta being
-~1.3× larger), and no single baseline run overlapped any colocated run in any cell. Unlike
-padding, the improvement held at every capacity and producer count tested — the residency
-trade that killed padding at cap 4096 does not apply here, because colocation reduces total
-cache-line traffic instead of redistributing one array's footprint.
+single cache line instead of two (§1, §2). This attacks the same cost by a different route
+than padding: it halves the number of cache lines a publish touches rather than spreading
+one array's entries apart. Adjacent producers still share a line — four `Slot<u64>`s per
+line rather than eight `avail` entries — so this reduces per-publish line traffic without
+eliminating false sharing between neighbouring sequences. Unlike padding, it does not add
+memory (no per-round padding, no residency trade-off that scales against capacity) — it
+removes a second array's cache-line traffic from the hot path entirely. Measured in
+interleaved A-B-A blocks against all three `mpsc_layout_probe` configurations, six colocated
+runs against three baseline runs per cell
+(`docs/bench-results/2026-08-09-colocated-slot.md`): **cap1024_p2 +15.45%, cap4096_p2
++14.59%, cap1024_p4 +11.93%** — every cell cleared its own run-to-run spread, by 1.3× to
+4.5×, and no single baseline run overlapped any colocated run in any cell. Unlike padding,
+the improvement held at every capacity and producer count tested — the residency trade that
+killed padding at cap 4096 does not apply here, because colocation reduces total cache-line
+traffic instead of redistributing one array's footprint.
 
 This is the first of the three MPSC layout/arithmetic hypotheses tried on this path
 (§7's division removal, padding above, and colocation) to clear an all-cells gate; §7's
@@ -536,7 +539,7 @@ since a single-writer ring needs neither a claim nor a shared round at all (not 
 colocated one §8 now measures a gain from). It also removes a head-of-line stall the
 shared-claim design has: a producer preempted between its claim and its round store blocks
 delivery of every already-published item behind it, because
-`drain` must stop at the hole (`src/mpsc.rs:293`). Measured on a 4-core Linux VM at equal
+`drain` must stop at the hole (`src/mpsc.rs:330`). Measured on a 4-core Linux VM at equal
 total buffered capacity: **321.5 Melem/s against this crate's own `mpsc` at 29.3 (~11×) and
 crossbeam-channel at 71.25 (4.51×).**
 

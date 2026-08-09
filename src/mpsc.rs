@@ -25,10 +25,17 @@ use crate::{TryRecvError, TrySendError, assert_cap};
 ///
 /// `repr(C)` with `round` first is load-bearing, not decoration. It pins the
 /// round at offset 0, so for a large `T` whose value spans several lines the
-/// round still shares a line with the *start* of the value — which is what the
-/// consumer reads first. Reordering these fields, or adding `align(64)`,
-/// silently discards the only reason this type exists. (`align(64)` in
-/// particular was measured as the separate "padding" lever and rejected:
+/// round shares a line with *part* of the value (`assume_init_read` copies the
+/// whole `T`, in no guaranteed order — the round is not "read first", just
+/// colocated with the start of the value's bytes). Reordering these fields
+/// would move the round off offset 0.
+///
+/// Colocation is a best-effort layout property, not an enforced invariant: a
+/// `T` whose own alignment is ≥ 64 pushes `value` to offset 64 under
+/// `repr(C)` and loses it entirely, and a `Slot<T>` whose size does not
+/// divide 64 will straddle lines for some slots. Both cost only throughput,
+/// never correctness. (`align(64)` on `Slot<T>` itself was measured as the
+/// separate "padding" lever and rejected:
 /// docs/bench-results/2026-08-09-mpsc-perf-v2.md.)
 #[repr(C)]
 struct Slot<T> {
