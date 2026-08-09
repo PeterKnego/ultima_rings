@@ -4,7 +4,7 @@
 //!
 //! Ordered by wake granularity, measured on a 4-core Linux VM:
 //! `BusySpin` (~27 ns, holds a core) → `BackoffYield` (~0.7 µs, still holds a
-//! core but yields it on demand) → `Park` (~1–5 µs, no idle CPU, costs the
+//! core but yields it on demand) → `Park` (~10 µs, no idle CPU, costs the
 //! peer a fence + wake) → `Backoff` (~64 µs floor, no idle CPU, costs the peer
 //! nothing).
 
@@ -36,8 +36,15 @@ pub enum WaitStrategy {
     /// [`WaitStrategy::Park`].
     BackoffYield,
     /// Fully blocking park/wake via the notify layer: zero idle CPU,
-    /// ~1–5 µs wake latency. Unlike the self-waking strategies, this makes the
-    /// *productive* side pay a `SeqCst` fence plus a wake on every operation.
+    /// ~10 µs median wake latency. Unlike the self-waking strategies, this
+    /// makes the *productive* side pay a `SeqCst` fence plus a wake on every
+    /// operation.
+    ///
+    /// The 10 µs figure is measured publish-to-delivery on a 4-core Linux VM
+    /// (`examples/wake_latency.rs`; 10.19–10.40 µs p50 across three runs).
+    /// Earlier revisions of this doc claimed ~1–5 µs, which was never measured
+    /// and is roughly 2x optimistic. Tail latency is deliberately not quoted:
+    /// it was not reproducible on that machine.
     Park,
 }
 
