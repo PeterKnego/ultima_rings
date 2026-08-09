@@ -5,7 +5,8 @@
 //! sequence claim is a **bounded CAS** — a producer claims `seq` only after
 //! proving `seq - head < cap` — so a claimed slot is always already free,
 //! `try_send` can fail without claiming, and a blocked sender holds nothing.
-//! Publish: slot write → `avail[slot] = seq / cap` (Release; -1 = never).
+//! Publish: slot write → `avail[slot] = seq >> shift` (Release; -1 = never),
+//! where `shift = log2(cap)` — the round number, computed without a division.
 //! The single consumer drains the contiguous published prefix and stores the
 //! shared head once per drain (Release).
 
@@ -19,10 +20,15 @@ use crate::{TryRecvError, TrySendError, assert_cap};
 
 pub(crate) struct Shared<T> {
     buf: Box<[UnsafeCell<MaybeUninit<T>>]>,
-    /// Per-slot published round number (`seq / cap`); -1 = never published.
+    /// Per-slot published round number (`seq >> shift`); -1 = never published.
     avail: Box<[AtomicI64]>,
     mask: usize,
     cap: usize,
+    /// `log2(cap)`. The round number is `seq >> shift`, not `seq / cap`:
+    /// `cap` is a runtime field, so the division could not be strength-reduced
+    /// and executed as a hardware `div` on every publish and every consumer
+    /// poll. Slot indexing already used `& mask` for the same reason (§7).
+    shift: u32,
     pub(crate) claim: CachePadded<AtomicUsize>, // next sequence to claim
     pub(crate) head: CachePadded<AtomicUsize>,  // total consumed
     pub(crate) senders: AtomicUsize,
@@ -47,7 +53,7 @@ impl<T> Drop for Shared<T> {
         let mut seq = self.head.0.load(Ordering::Acquire);
         loop {
             let slot = seq & self.mask;
-            if self.avail[slot].load(Ordering::Acquire) != (seq / self.cap) as i64 {
+            if self.avail[slot].load(Ordering::Acquire) != (seq >> self.shift) as i64 {
                 break;
             }
             // SAFETY: published and never consumed.
@@ -73,6 +79,13 @@ pub fn channel<T: Send>(cap: usize, strategy: WaitStrategy) -> (Sender<T>, Recei
         avail,
         mask: cap - 1,
         cap,
+        shift: {
+            let shift = cap.trailing_zeros();
+            // `assert_cap` guarantees a power of two, so the shift is exactly
+            // equivalent to the division it replaces.
+            debug_assert_eq!(1usize << shift, cap);
+            shift
+        },
         claim: CachePadded(AtomicUsize::new(0)),
         head: CachePadded(AtomicUsize::new(0)),
         senders: AtomicUsize::new(1),
@@ -138,7 +151,7 @@ impl<T: Send> Sender<T> {
             (*p).write(v);
         });
         // Release pairs with the consumer's Acquire load of avail.
-        sh.avail[seq & sh.mask].store((seq / sh.cap) as i64, Ordering::Release);
+        sh.avail[seq & sh.mask].store((seq >> sh.shift) as i64, Ordering::Release);
         if sh.strategy == WaitStrategy::Park {
             crate::atomic::fence(Ordering::SeqCst);
             sh.consumer_parker.wake();
@@ -199,7 +212,7 @@ impl<T: Send> Clone for Sender<T> {
 impl<T: Send> Receiver<T> {
     fn slot_published(&self, seq: usize) -> bool {
         let sh = &*self.shared;
-        sh.avail[seq & sh.mask].load(Ordering::Acquire) == (seq / sh.cap) as i64
+        sh.avail[seq & sh.mask].load(Ordering::Acquire) == (seq >> sh.shift) as i64
     }
 
     /// Pop without blocking. Drains remaining items after all senders
@@ -280,7 +293,7 @@ impl<T: Send> Receiver<T> {
 
         let sh = &*self.shared;
         let mask = sh.mask;
-        let cap = sh.cap;
+        let shift = sh.shift;
         let buf = &sh.buf;
         let avail = &sh.avail;
         let mut count = 0usize;
@@ -294,7 +307,7 @@ impl<T: Send> Receiver<T> {
             let seq = *guard.head;
             let slot = seq & mask;
             // SAFETY: slot is within bounds; avail[slot] is initialized.
-            if avail[slot].load(Ordering::Acquire) != (seq / cap) as i64 {
+            if avail[slot].load(Ordering::Acquire) != (seq >> shift) as i64 {
                 break;
             }
             // SAFETY: as in try_recv.
@@ -382,6 +395,36 @@ mod tests {
             tx.try_send("b".into()),
             Err(TrySendError::Disconnected("b".to_string()))
         );
+    }
+
+    #[test]
+    fn survives_many_ring_wraps() {
+        // Directly exercises the availability *round* number, which is what
+        // `shift` replaces a division with. A wrong round computation shows up
+        // only after the ring wraps: slot indices repeat, and only the round
+        // distinguishes a fresh publish from a stale one. cap 4 x 100 items =
+        // 25 wraps, and both the single-item and drain consume paths are used.
+        let (mut tx, mut rx) = channel::<u64>(4, WaitStrategy::BusySpin);
+        let mut expected = 0u64;
+        for round in 0..50u64 {
+            for i in 0..4 {
+                tx.try_send(round * 4 + i).unwrap();
+            }
+            assert_eq!(tx.try_send(9999), Err(TrySendError::Full(9999)));
+            if round % 2 == 0 {
+                for _ in 0..4 {
+                    assert_eq!(rx.try_recv(), Ok(expected));
+                    expected += 1;
+                }
+            } else {
+                let mut got = Vec::new();
+                assert_eq!(rx.drain(usize::MAX, |v| got.push(v)), 4);
+                assert_eq!(got, (expected..expected + 4).collect::<Vec<u64>>());
+                expected += 4;
+            }
+        }
+        assert_eq!(expected, 200);
+        assert_eq!(rx.try_recv(), Err(TryRecvError::Empty));
     }
 
     #[test]
