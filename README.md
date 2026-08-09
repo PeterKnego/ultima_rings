@@ -72,32 +72,47 @@ certified AWS measurement — that re-run has not happened yet.
 
 ### This crate's own bake-off (criterion, single 4-core dev box)
 
-`cargo bench` (see `benches/throughput.rs`, full results in [`docs/bench-results/2026-08-06-bakeoff.md`](docs/bench-results/2026-08-06-bakeoff.md))
-measures `ultima_rings` `BusySpin` throughput head-to-head against `crossbeam-channel`,
-`flume`, `kanal`, and (SPSC-only) `rtrb`:
+`cargo bench` (see `benches/throughput.rs`, full results in [`docs/bench-results/2026-08-09-bakeoff-v2.md`](docs/bench-results/2026-08-09-bakeoff-v2.md))
+measures `ultima_rings` throughput head-to-head against `crossbeam-channel`, `flume`,
+`kanal`, and (SPSC-only) `rtrb`. Median of three runs in one session, range alongside:
 
-| Group | Competitor | Melem/s (mid) |
-|---|---|---:|
-| SPSC | **ultima_rings `BusySpin` (pipelined)** | **620.1** |
-| SPSC | rtrb | 626.5 |
-| SPSC | crossbeam-channel | 39.9 |
-| SPSC | kanal | 20.7 |
-| SPSC | flume | 10.9 |
-| MPSC (2 producers) | crossbeam-channel | 71.0 |
-| MPSC (2 producers) | **ultima_rings `BusySpin`** | **29.9** |
-| MPSC (2 producers) | flume | 7.7 |
-| MPSC (2 producers) | kanal | 5.3 |
+| Group | Competitor | Melem/s (median) | range | vs. crossbeam |
+|---|---|---:|---|---:|
+| SPSC | rtrb | 561.6 | 513.1 – 575.8 | 15.19× |
+| SPSC | **ultima_rings `BusySpin` (pipelined)** | **480.7** | 466.1 – 522.8 | **13.00×** |
+| SPSC | crossbeam-channel | 37.0 | 34.3 – 37.4 | 1.00× |
+| SPSC | flume | 10.4 | 8.9 – 10.7 | 0.28× |
+| SPSC | kanal | 4.9 | 4.8 – 10.9 | 0.13× ⚠ |
+| MPSC (2 producers) | **ultima_rings `sharded`** (experimental) | **317.4** | 309.4 – 329.8 | **5.28×** |
+| MPSC (2 producers) | crossbeam-channel | 60.1 | 59.4 – 60.6 | 1.00× |
+| MPSC (2 producers) | **ultima_rings `BusySpin`** | **35.1** | 34.5 – 35.4 | **0.58×** |
+| MPSC (2 producers) | flume | 7.8 | 7.5 – 7.8 | 0.13× |
+| MPSC (2 producers) | kanal | 6.0 | 5.4 – 9.1 | 0.10× ⚠ |
+| MPSC blocking | crossbeam-channel blocking | 42.7 | 41.3 – 43.7 | 1.00× |
+| MPSC blocking | **ultima_rings `Park`** | **14.6** | 13.4 – 14.7 | **0.34×** |
 
-**Provenance caveat:** these bake-off numbers predate the colocation change measured in
-`docs/design.md` §8 (merging the availability round into each slot with its payload, roughly
-+12–15% on MPSC's own layout probe) — the bake-off itself has not been re-run since.
+⚠ kanal's spread is 129% (SPSC) and 68% (MPSC) across three runs, where every other cell is
+under 20%. Its median is shown for completeness but is not a meaningful point estimate.
 
-SPSC leads `crossbeam-channel` by **~15.5×** and lands at parity with `rtrb` (also a
-minimal-overhead, wait-strategy-free lock-free SPSC ring); note that this crate's `drain`
-uses batched consumption while competitors single-pop, yet the single-pop `rtrb` result
-(626 Melem/s) is only 1% higher, so batching is not the headline's source. **MPSC currently
-trails `crossbeam-channel`, at ~0.42× its throughput** — under this 2-producer/4-core
-contention shape, crossbeam's `fetch_add` claim beats this crate's bounded-CAS claim; both
+**Compare ratios, not absolute figures across sessions.** This box measured ~20% slower than
+it did on 2026-08-06 on *unchanged* code: `src/spsc.rs` was untouched between the two runs
+and fell from 620.1 to 466–523, while `rtrb` — a third-party crate — fell in lockstep from
+626.5 to 513–576. Deltas computed against the older
+[`2026-08-06-bakeoff.md`](docs/bench-results/2026-08-06-bakeoff.md) table are therefore
+meaningless; the ratios above are same-session and are the comparable quantity.
+
+SPSC leads `crossbeam-channel` by **13.0×**. It does *not* reach parity with `rtrb`: rtrb led
+in all three runs (0.91×, 0.91×, 0.86×), where the v1 measurement had recorded 0.99×. Since
+`src/spsc.rs` is unchanged between the two, this is not a regression in this crate — either
+the earlier pairing was favourable noise or the two crates respond differently to whatever
+changed about the box, and that has not been diagnosed. Note also that this crate's `drain`
+uses batched consumption while competitors single-pop, so the comparison is not
+like-for-like on API shape.
+
+**MPSC trails `crossbeam-channel` at 0.58× its throughput** (0.49× against crossbeam's
+best-ever figure on this box, 71.25, which is the least favourable denominator available) —
+under this 2-producer/4-core contention shape, crossbeam's `fetch_add` claim beats this
+crate's bounded-CAS claim; both
 designs now colocate their per-slot round/stamp with the payload (`docs/design.md` §8), so
 the gap traces to the claim mechanism itself, not to slot layout. This is an accepted,
 documented trade for v1, not an oversight: the bounded claim buys correctness properties
@@ -115,7 +130,7 @@ close this gap. A reference implementation does not hide a lost benchmark.
   protocol, close-vs-park races, and the producer waiter-list vs. receiver-drop race — 5
   models, all passing. This is what catches the Acquire/Release bugs x86's strong memory
   model would otherwise hide.
-- **miri** runs the full test suite (32 tests) over every `MaybeUninit`
+- **miri** runs the full test suite (51 tests with all features) over every `MaybeUninit`
   write/read/drop call site in the crate — zero undefined-behavior findings.
 - **Stress tests** (`tests/*_stress.rs`) exercise no-loss/no-duplication delivery under
   sustained multi-producer contention and generic-`T` drop-accounting (every value dropped
