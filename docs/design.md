@@ -413,16 +413,22 @@ same structurally-sound approach the `heapless` survey recommends (issue #650/#6
 erasing a const-generic capacity can reintroduce `__aeabi_uidivmod` calls in the hot path).
 Slot indexing is therefore division-free by construction.
 
-**The availability-round division cost (`seq / cap` at runtime).** MPSC's per-slot availability
-array stores round numbers (`seq / cap`; see §1) to detect wrap-around without an ABA problem.
-This division is computed on the publish path (every `try_send`) and the consume path (the
-`slot_published` check in every `try_recv`/`drain`). The mask-based indexing avoids dividing
-the index itself, but not the round number — `seq / cap` executes as a runtime division
-instruction on both producer and consumer. This is a known, accepted v1 cost that contributes
-to the MPSC bake-off gap documented in the README (§8 below), not an oversight. The v2
-optimization lever is precomputed shifts: storing a cached `shift = log2(cap)` from
-construction and replacing `seq / cap` with `seq >> shift` (cheaper and loom/miri re-verifiable,
-since the shift is deterministic).
+**The availability-round division — resolved in v2, and it changed nothing measurable.**
+MPSC's per-slot availability array stores round numbers (see §1) to detect wrap-around
+without an ABA problem, computed on the publish path (every `try_send`) and the consume path
+(every `try_recv`/`drain`). Through v1 this was `seq / cap`, and because `cap` is a runtime
+field the compiler could not strength-reduce it: it executed as a hardware division on both
+producer and consumer. v2 replaced it with `seq >> shift`, where `shift = log2(cap)` is
+cached at construction (`assert_cap` guarantees the power of two, and a `debug_assert` pins
+the equivalence).
+
+The change is kept because removing a division from two hot paths at zero semantic risk is
+correct regardless — but it produced **no measurable throughput change**, sitting inside the
+benchmark cell's ~2.9% run-to-run spread
+(`docs/bench-results/2026-08-09-mpsc-perf-v2.md`). A `div` costs roughly 20–40 cycles against
+~1 for a shift, once per element, and it vanished into the noise. That is evidence the MPSC
+hot path is dominated by cross-core traffic rather than ALU work, and evidence against
+expecting further arithmetic micro-optimisation to move this design.
 
 **What stayed byte-equivalent.** The actual publish/consume edges — SPSC's `tail`
 Release/`head` Acquire pair, and MPSC's `avail[slot] = seq / cap` Release/Acquire
@@ -473,10 +479,28 @@ the CAS-retry cost from §7) to the MPSC bake-off result documented in the READM
 `ultima_rings`' bounded-CAS MPSC currently trails `crossbeam-channel`'s `fetch_add`+colocated-
 stamp design under the bake-off's specific 2-producer/4-core contention shape, though this
 document does not claim to have isolated false sharing as the dominant cause versus the CAS
-retry cost — both are real, neither has been measured in isolation. Padding the
-availability array (or interleaving it with the buffer, LMAX-cacheline-padding-style) is
-the concrete, identified v2 lever if this cost needs to be paid down; a batched claim (see
-README) is the other.
+retry cost — both are real, neither has been measured in isolation.
+
+**v2 measured the padding, and rejected it.** Padding `avail` to one 64-byte line per entry
+was the concrete lever named here for paying this cost down. It was implemented and measured
+(`docs/bench-results/2026-08-09-mpsc-perf-v2.md`), and the result did not survive contact
+with a second configuration: **+3.5% at cap 1024 / 2 producers in a single cell, +2.0% for
+the same shape in a different harness, and −0.1% at cap 4096** — nothing at all. The cause is
+visible in the trade itself: padding buys freedom from false sharing at the price of cache
+residency, and the two scale in opposite directions. Unpadded, `avail` at cap 1024 is 8 KiB
+and fits a typical 32–48 KiB L1d; padded it is 64 KiB and does not; at cap 4096 padded it is
+256 KiB, and the residency cost cancels the false-sharing benefit exactly. The memory price
+was `cap × 64 B` — an 8× blow-up on the array and ~4.5× on the whole channel — so the code
+was reverted and the compact layout stands, now on a measurement rather than only on the
+argument above.
+
+That outcome also weakens this section's own attribution. If false sharing on `avail` were a
+dominant cost, removing it entirely would have shown more than +2.0% at the configuration
+where it should help most; and §7's division removal produced no measurable change either.
+Neither of the two costs §7 and §8 name for the MPSC gap has been shown to matter much, so
+**the dominant cost remains unidentified** — an honest open question, not a solved one. A
+batched claim (see README) is the remaining untried lever for this design; `src/sharded.rs`
+(§9) is the answer for callers who can give up global FIFO.
 
 ## 9. Alternatives considered
 
