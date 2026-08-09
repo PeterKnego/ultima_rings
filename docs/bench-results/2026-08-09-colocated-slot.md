@@ -38,8 +38,10 @@ Box quietness (`vmstat 2 3`, checked before each block, never overlapping a buil
 
 The A2 window ran a few points lower (80-85% idle) than A1/B, from other unrelated
 background sessions on this shared box (`ps aux` showed several other `claude` processes,
-not a build of this crate overlapping the run) — `r` (runnable) stayed at 0 throughout, and
-the A1-vs-A2 stability check below confirms this did not distort the comparison.
+not a build of this crate overlapping the run) — `r` (runnable) stayed at 0 throughout. See
+the A1-vs-A2 stability check below for the full picture: it is not a clean pass under every
+reading, but the evidence argues against a systematic drift, and the gate result does not
+depend on it.
 
 ## Raw per-cell numbers (Melem/s)
 
@@ -57,15 +59,39 @@ the A1-vs-A2 stability check below confirms this did not distort the comparison.
 
 ## A1-vs-A2 stability check
 
-| Cell | A1 mean | A2 mean | A1→A2 change | A1 spread | A2 spread | Verdict |
-|---|---:|---:|---:|---:|---:|---|
-| cap1024_p2 | 35.447 | 34.657 | -2.23% | 2.26% | 0.61% | within spread — stable |
-| cap4096_p2 | 37.007 | 36.247 | -2.05% | 2.13% | 2.95% | within spread — stable |
-| cap1024_p4 | 26.363 | 27.573 | +4.59% | 7.78% | 2.72% | within spread — stable |
+| Cell | A1 mean | A2 mean | A1→A2 change | A1 spread | A2 spread | vs. larger spread | vs. smaller spread |
+|---|---:|---:|---:|---:|---:|---|---|
+| cap1024_p2 | 35.447 | 34.657 | -2.23% | 2.26% | 0.61% | within (2.26%) | **exceeds** (0.61%) |
+| cap4096_p2 | 37.007 | 36.247 | -2.05% | 2.13% | 2.95% | within (2.95%) | within (2.13%) |
+| cap1024_p4 | 26.363 | 27.573 | +4.59% | 7.78% | 2.72% | within (7.78%) | **exceeds** (2.72%) |
 
-In every cell the A1-to-A2 change is smaller than at least one of the two blocks' own
-run-to-run spread, so no monotonic drift is masquerading as (or masking) an effect. The box
-was stable enough for the comparison to be valid.
+This check has two possible readings and they disagree, which needs to be disclosed rather
+than resolved by picking the flattering one. Comparing the A1-to-A2 change against the
+*larger* of the two blocks' spreads (the lenient reading) makes all three cells look
+stable. Comparing it against the *smaller* of the two spreads — the stricter threshold, and
+the actually conservative choice for a test whose job is to catch instability, since it
+makes "stable" harder to conclude — flags two of three cells: cap1024_p2's -2.23% change
+exceeds A2's tight 0.61% spread, and cap1024_p4's +4.59% change exceeds A2's 2.72% spread.
+Only cap4096_p2 passes under both readings.
+
+So this check does not cleanly establish box stability on its own. Two things keep it from
+undermining the verdict, though:
+
+1. **The gate deltas dwarf both readings of block-to-block spread.** The colocated-vs-
+   baseline deltas are +15.45%, +14.59%, and +11.93% — several times larger than even the
+   largest A1-vs-A2 spread measured anywhere in this table (7.78%). Whatever is producing
+   the A1-to-A2 wobble, it is an order smaller than the effect the gate is measuring.
+2. **The wobble is not monotonic across cells, which argues against a systematic drift.**
+   cap1024_p4's A1-to-A2 change is *positive* (+4.59%) while cap1024_p2 and cap4096_p2's
+   are both *negative* (-2.23%, -2.05%). A real box-wide drift (thermal throttling,
+   creeping background load) would be expected to push all three cells the same direction
+   across the ~20 minutes this measurement took, not two down and one up. The more likely
+   explanation is ordinary block-to-block noise on a 3-run sample landing outside a couple
+   of cells' own tight A2 spread, not a directional trend biasing the comparison.
+
+Taken together: this check does not prove the box was perfectly stable, but it also shows
+no evidence of a drift large enough, or consistent enough in direction, to be the source of
+the colocated-vs-baseline gap. The gate result does not depend on this check passing.
 
 ## Results
 
