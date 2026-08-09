@@ -469,9 +469,24 @@ and it means design.md §8's account of the cost was wrong in a third way.>
 
 - [ ] **Step 8: Update `docs/design.md`**
 
-Three edits, whichever way the gate landed:
+**If the gate KEPT the change, `docs/design.md` currently describes a layout that no longer exists**, and the module doc added in Task 1 points a reader straight at it. The Task 1 reviewer enumerated the stale sites; all of them must be corrected, not just §8:
 
-1. **§8** — add the colocation outcome next to the padding outcome already recorded there. If reverted, state that a third hypothesis has now failed and the dominant cost remains unidentified. If kept, state the measured gain and that the two-array layout is gone.
+| Location | What is stale |
+|---|---|
+| `design.md:57` (§1) | "a per-slot availability array (`avail: Box<[AtomicI64]>`)" |
+| `design.md:81-89` (§1) | the wrap/ABA argument, keyed on the separate array |
+| `design.md:106-107` (§2) | **the normative ordering table** — two rows keyed on `mpsc avail[slot]` |
+| `design.md:340-352` (§6) | the drop-drain argument |
+| `design.md:417`, `:434` (§7) | further `avail` references |
+| `benches/throughput.rs` (`mpsc_layout_probe` banner) | comments describe "an `avail`-array layout change" and "an unpadded avail array is 8 KiB" |
+
+§2's table is the authority on the publication edge, so a stale row there is the most consequential of these. Rewrite each to `slots[i].round` / `Slot<T>`.
+
+**If the gate REVERTED the change**, all of the above is already accurate and needs no edit — check rather than assume.
+
+Then, whichever way the gate landed:
+
+1. **§8** — add the colocation outcome next to the padding outcome already recorded there. If reverted, state that a third hypothesis has now failed and the dominant cost remains unidentified. If kept, state the measured gain, and rewrite the "false-sharing reality of the interleaved availability array" framing — that paragraph becomes the *motivation* for the change rather than a standing cost.
 
 2. **§9** — add a sentence to the "Vyukov per-slot stamps" paragraph distinguishing layout from protocol: this crate now colocates (or measured and rejected colocating) the round with the payload, which is a *layout* change, while §9's rejection is of the *protocol* that folds readiness into an atomic also encoding the claim — a coupling this design never adopts.
 
