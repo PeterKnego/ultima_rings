@@ -627,6 +627,115 @@ fn bakeoff_park_mpsc(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
+// Disruptor cells. `disruptor` 4.4 is the maintained Rust port of the LMAX
+// Disruptor and the closest structural relative of `src/mpsc.rs` — a claim
+// cursor plus per-slot availability publication. Every other competitor here is
+// a channel; this is the same lineage, so it measures what the design family
+// can reach. Survey: docs/superpowers/research/2026-08-10-disruptor-survey.md.
+//
+// TWO CELLS, because disruptor's consumer can take one event or a whole
+// available run, and the difference is the question we are actually asking:
+//   batched — `poll()` (limit u64::MAX), all currently-available events per
+//             poll. This is disruptor's idiomatic API and what its availability
+//             bitmap (one bit per slot, 64 per word) exists to make cheap.
+//   single  — `take(1)`, one event per poll.
+//
+// The `single` cell is NOT a like-for-like single-item comparison against the
+// crossbeam/flume/kanal cells, and must never be quoted as one. `take` runs the
+// full availability walk BEFORE applying its limit:
+//
+//     let available = self.dependent_barrier.get_after(sequence);  // full scan
+//     ...
+//     let available = std::cmp::min(available, max_sequence);      // then capped
+//
+// and `get_after` walks the contiguous published run bit by bit until it hits a
+// parity mismatch. So `take(1)` costs O(backlog) per event and O(backlog^2) to
+// drain a backlog — and because the slow consumer lets the backlog grow, the two
+// feed each other.
+//
+// That is a genuine property of the bitmap design rather than an implementation
+// slip, and it is exactly the trade this crate faces in reverse: a per-slot round
+// number makes the single-item check O(1) and the batch check O(n), while a
+// shared bitmap makes the batch check O(n/64) and the single-item check O(n).
+// The cell is kept because that trade is the finding, not because the number is
+// a fair head-to-head.
+//
+// NOT LIKE-FOR-LIKE, in two ways that must be stated with any number:
+//  1. Disruptor slots are pre-constructed by a factory and mutated in place
+//     (`FnOnce(&mut E)`); it never moves a value in and has no `MaybeUninit`
+//     and no drop bookkeeping. For a `u64` payload that difference nearly
+//     vanishes — writing a u64 into a slot and mutating a u64 in a slot are the
+//     same store — which is why `u64` is the payload where this comparison is
+//     close to fair. It would NOT be fair for a `String` or any `T` with a
+//     destructor.
+//  2. Batched *publication* (`try_batch_publish`, the batched claim itself) is
+//     not measured. These producers hold one item at a time, which is the
+//     workload this crate targets; batching the producer would change the
+//     workload, not just the API.
+// ---------------------------------------------------------------------------
+
+fn bakeoff_disruptor_mpsc(c: &mut Criterion) {
+    use disruptor::{BusySpin, Polling, Producer, build_multi_producer};
+
+    let mut g = c.benchmark_group("bakeoff_disruptor_mpsc");
+    g.throughput(Throughput::Elements(BATCH));
+
+    // `limit` is the per-poll event cap: 1 mimics `try_recv`, u64::MAX is
+    // disruptor's own `poll()`.
+    for (name, limit) in [("disruptor_single", 1u64), ("disruptor_batched", u64::MAX)] {
+        g.bench_function(name, |b| {
+            b.iter_custom(|iters| {
+                let mut total = std::time::Duration::ZERO;
+                for _ in 0..iters {
+                    let builder = build_multi_producer(1024, || 0u64, BusySpin);
+                    let (mut poller, builder) = builder.new_event_poller();
+                    let producer = builder.build();
+                    let barrier = Arc::new(Barrier::new(3));
+                    let mut handles = Vec::new();
+                    for _ in 0..2 {
+                        let mut tx = producer.clone();
+                        let barrier = Arc::clone(&barrier);
+                        handles.push(thread::spawn(move || {
+                            barrier.wait();
+                            for i in 0..BATCH / 2 {
+                                // Retry on a full ring, matching every other
+                                // producer loop in this file.
+                                while tx.try_publish(|e| *e = i).is_err() {
+                                    std::hint::spin_loop();
+                                }
+                            }
+                        }));
+                    }
+                    // Drop the original handle so the last producer's drop
+                    // signals shutdown, as `drop(tx)` does for the channels.
+                    drop(producer);
+                    barrier.wait();
+                    let t = Instant::now();
+                    let mut got = 0u64;
+                    while got < BATCH {
+                        match poller.take(limit) {
+                            Ok(mut events) => {
+                                for _ in &mut events {
+                                    got += 1;
+                                }
+                            }
+                            Err(Polling::NoEvents) => std::hint::spin_loop(),
+                            Err(Polling::Shutdown) => break,
+                        }
+                    }
+                    total += t.elapsed();
+                    for h in handles {
+                        h.join().unwrap();
+                    }
+                }
+                total
+            })
+        });
+    }
+    g.finish();
+}
+
+// ---------------------------------------------------------------------------
 // Layout probe: the same MPSC workload across capacities and producer counts.
 // Exists to test whether an MPSC hot-path layout change generalizes or holds
 // only at one point — the recurring lesson on this path is that a single
@@ -710,6 +819,7 @@ criterion_group!(
     bakeoff_spsc,
     bakeoff_mpsc,
     bakeoff_park_mpsc,
+    bakeoff_disruptor_mpsc,
     mpsc_layout_probe
 );
 

@@ -88,11 +88,24 @@ measures `ultima_rings` throughput head-to-head against `crossbeam-channel`, `fl
 | MPSC (2 producers) | **ultima_rings `BusySpin`** | **35.1** | 34.5 – 35.4 | **0.58×** |
 | MPSC (2 producers) | flume | 7.8 | 7.5 – 7.8 | 0.13× |
 | MPSC (2 producers) | kanal | 6.0 | 5.4 – 9.1 | 0.10× ⚠ |
+| MPSC (2 producers) | `disruptor` (batched consume) † | 27.2 | 25.6 – 27.7 | 0.45× |
+| MPSC (2 producers) | `disruptor` (`take(1)`) † | 1.3 | 1.3 – 1.4 | 0.02× ⚠ |
 | MPSC blocking | crossbeam-channel blocking | 42.7 | 41.3 – 43.7 | 1.00× |
 | MPSC blocking | **ultima_rings `Park`** | **14.6** | 13.4 – 14.7 | **0.34×** |
 
 ⚠ kanal's spread is 129% (SPSC) and 68% (MPSC) across three runs, where every other cell is
 under 20%. Its median is shown for completeness but is not a meaningful point estimate.
+
+† [`disruptor`](https://crates.io/crates/disruptor) is the maintained Rust port of the LMAX
+Disruptor, and the only competitor here built on the same lineage as `src/mpsc.rs` (claim
+cursor + per-slot availability publication) rather than being a channel. Measured in a later
+session whose comparators reproduced within ~5% of this table. Its batched-consume figure
+(27.2) is **below this crate's own MPSC** (35.1) — notable because its in-place slots mean it
+moves no values and does no drop bookkeeping, so it is doing less work per element and still
+finishing behind. Its `take(1)` figure is *not* a like-for-like single-item comparison:
+`EventPoller::take` runs a full availability walk before applying its limit, making
+single-item consumption O(backlog) per event. Batched *publication* was not measured. See
+[`docs/superpowers/research/2026-08-10-disruptor-survey.md`](docs/superpowers/research/2026-08-10-disruptor-survey.md).
 
 **Compare ratios, not absolute figures across sessions.** This box measured ~20% slower than
 it did on 2026-08-06 on *unchanged* code: `src/spsc.rs` was untouched between the two runs

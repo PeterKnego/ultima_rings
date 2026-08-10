@@ -150,6 +150,35 @@ distinct published strategies, where `ultima_rings::WaitStrategy::BusySpin`
 conflates them by always emitting the hint. There is no parking strategy at all —
 the Disruptor assumes pinned, dedicated threads.
 
+## Postscript: it was then measured, and it is slower than what we ship
+
+After this survey, `disruptor` was added to the bake-off
+(`bakeoff_disruptor_mpsc`, results in `docs/bench-results/2026-08-09-bakeoff-v2.md`).
+Median of three runs, 2 producers, cap 1024, `u64`:
+
+| | Melem/s | vs. this crate's `mpsc` |
+|---|---:|---:|
+| `ultima_rings::mpsc` | 33.20 | 1.00× |
+| `disruptor` (batched consume) | 27.18 | **0.82×** |
+| `disruptor` (`take(1)`) | 1.33 | 0.04× (see below) |
+
+**The batched design measures slower than the design we already have** — and it
+does so while doing *less* work per element, since its in-place slots mean no
+move, no `MaybeUninit`, and no drop bookkeeping.
+
+The "don't adopt" conclusion above was reached from an argument. It now has a
+number, and the number is the more decisive of the two. Note the caveat: batched
+*publication* was not measured, because the harness's producers hold one item at
+a time; this is disruptor with batched consumption and single publication.
+
+The `take(1)` figure also confirmed the bitmap's cost profile concretely.
+`EventPoller::take` runs the full availability walk before applying its limit
+(`event_poller.rs:253-259`), so single-item consumption is O(backlog) per event
+and O(backlog²) to drain. The general shape — **bitmap: batch O(n/64),
+single O(n); per-slot round: single O(1), batch O(n)** — is a reason to keep the
+per-slot round that stands independent of any throughput number, because this
+crate's hot path consumes single items.
+
 ## What to take, what to leave
 
 - **Leave** the batched claim as an optimisation of `src/mpsc.rs`. It is only
