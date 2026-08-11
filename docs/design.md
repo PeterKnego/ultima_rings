@@ -66,9 +66,18 @@ head, refreshed with an `Acquire` load of the real `head` whenever the cheap che
 Because `head` only increases, and because the check is against a value that is always
 `<=` the true `head` at the moment of the CAS (a stale cache only under-counts progress,
 never over-counts it), **every CAS that succeeds does so with `seq - head < cap` true at
-that instant, for the true `head`.** This is materially different from the classic
-LMAX/Vyukov `fetch_add` claim, which increments unconditionally and defers the
-full-ring wait to *after* the claim — see §7.
+that instant, for the true `head`.** This is materially different from an **unconditional**
+claim, which increments the cursor first and defers the full-ring wait to *after* the
+claim — the shape used by the `hi-perf-cmp` bench cell this ring was ported from
+(`fetch_add(1)`; see §7).
+
+Note this is a bounded-vs-unconditional distinction, not a CAS-vs-`fetch_add` one, and it
+is narrower than an earlier revision of this document claimed. Actual LMAX and Vyukov
+implementations claim conditionally with a CAS, not with `fetch_add`: the maintained Rust
+LMAX port uses `compare_exchange_weak` on its cursor
+(`docs/superpowers/research/2026-08-10-disruptor-survey.md`), and `crossbeam-channel`'s
+array flavor does the same on `tail`. What those designs condition on differs from this one
+(a per-slot stamp rather than a `head` bound), but they are not unconditional.
 
 That bound buys the safety argument for free: `seq - head < cap` means `head > seq - cap`,
 i.e. the consumer has already advanced past sequence `seq - cap` — the previous occupant
@@ -402,10 +411,17 @@ middle of the consumer's contiguous-prefix scan; (3) as a consequence of (2), th
 consumer's `drain`/`try_recv` never has to reason about "a slot that's claimed but not
 written yet, is that a hole I should stop at or wait past" — the claim/head bound already
 guarantees every claimed-and-in-progress slot is one the consumer hasn't reached yet. The
-cost is a CAS-retry loop on the claim path instead of a single `fetch_add`, which is part
-of why the MPSC bake-off number in the README trails `crossbeam-channel`'s classic
-`fetch_add`-based design under heavy contention — an accepted v1 trade, not an oversight
-(see the README's numbers section and §8).
+cost is a CAS-retry loop on the claim path instead of a single `fetch_add` — an accepted v1
+trade against the bench cell, not an oversight.
+
+That cost is **not**, however, the explanation for the MPSC bake-off gap against
+`crossbeam-channel`, as an earlier revision of this paragraph asserted.
+`crossbeam-channel`'s array flavor has no `fetch_add`: it claims with
+`compare_exchange_weak` on `tail`, so it pays a CAS per element too, and with a *stronger*
+success ordering than this crate's (`SeqCst` against `Relaxed`). The gap cannot be
+attributed to CAS-versus-`fetch_add` because that difference does not exist between these
+two crates. See the README's numbers section and §8; the honest position is that the
+dominant cost is still unidentified.
 
 **`& mask` instead of `%` for slot indexing.** Both rings index the physical buffer with
 `seq & (cap - 1)` rather than `seq % cap`, matching the bench cells' own indexing convention.
@@ -477,8 +493,8 @@ over unchanged from the `hi-perf-cmp` bench cell the AWS numbers in the README m
 (9.4 M ops/s, p50 277 ns, 2-producer MPSC on `c6id.2xlarge`), so whatever cache-line traffic
 it caused was already priced into that measured number, not an unmeasured risk the port
 introduced. It was also a plausible partial contributor (alongside the CAS-retry cost from
-§7) to the MPSC bake-off result documented in the README: `ultima_rings`' bounded-CAS MPSC
-trails `crossbeam-channel`'s `fetch_add`+colocated-stamp design under the bake-off's
+§7) to the MPSC bake-off result documented in the README: `ultima_rings`' MPSC trails
+`crossbeam-channel`'s CAS-claim + colocated-stamp design under the bake-off's
 specific 2-producer/4-core contention shape — this section does not claim to have isolated
 either cost as dominant versus the other, both are real, and the bake-off numbers predate
 the colocation change below.
@@ -521,9 +537,16 @@ before failing at a second configuration. Colocation does not, on its own, resol
 bake-off gap against `crossbeam-channel` — the CAS-retry claim cost from §7 remains
 untouched, and the bake-off numbers above predate this change — but it is real, reproducible
 evidence that per-publish cache-line traffic was a measurable part of the MPSC hot-path
-cost, where arithmetic and array padding were not. A batched claim (see README) remains the
-only untried lever for the claim-side cost; `src/sharded.rs` (§9) remains the answer for
-callers who can give up global FIFO.
+cost, where arithmetic and array padding were not.
+
+The batched claim, long recorded here as the remaining untried lever, has since been tried —
+by proxy, and it lost. `disruptor` 4.4 ships that design (batched claim, bitmap availability,
+in-place slots) and measures 27.2 Melem/s against this crate's 33.2 on the same box and
+workload, while doing less work per element
+(`docs/bench-results/2026-08-09-bakeoff-v2.md`, addendum; survey in
+`docs/superpowers/research/2026-08-10-disruptor-survey.md`). It is recorded as tried and
+rejected, not pending. `src/sharded.rs` (§9) remains the answer for callers who can give up
+global FIFO, and the claim-side cost remains unexplained rather than merely unaddressed.
 
 ## 9. Alternatives considered
 

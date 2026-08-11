@@ -124,16 +124,32 @@ like-for-like on API shape.
 
 **MPSC trails `crossbeam-channel` at 0.58× its throughput** (0.49× against crossbeam's
 best-ever figure on this box, 71.25, which is the least favourable denominator available) —
-under this 2-producer/4-core contention shape, crossbeam's `fetch_add` claim beats this
-crate's bounded-CAS claim; both
-designs now colocate their per-slot round/stamp with the payload (`docs/design.md` §8), so
-the gap traces to the claim mechanism itself, not to slot layout. This is an accepted,
-documented trade for v1, not an oversight: the bounded claim buys correctness properties
-`fetch_add` structurally cannot (`try_send` can report `Full` without claiming a slot, and a
-blocked producer holds no unpublished hole for the consumer to reason about — see
-`docs/design.md` §7) at the cost of a CAS-retry loop; a batched claim (reserving a
-contiguous run of sequences per CAS instead of one at a time) is the identified v2 lever to
-close this gap. A reference implementation does not hide a lost benchmark.
+under this 2-producer/4-core contention shape. Both designs now colocate their per-slot
+round/stamp with the payload (`docs/design.md` §8), so the gap does not trace to slot layout.
+
+**What the gap is not:** earlier revisions of this section said crossbeam wins via a
+`fetch_add` claim. That is wrong — `crossbeam-channel`'s array flavor contains no
+`fetch_add` at all, claiming with `compare_exchange_weak` on `tail` (and on `head` for its
+consumer, since it is MPMC). Both crates do one CAS per element on a contended cursor, and
+this crate's is the *weaker* ordering of the two (`Relaxed/Relaxed` against crossbeam's
+`SeqCst/Relaxed`). The remaining gap is therefore **not diagnosed**; the two levers
+`docs/design.md` §7 and §8 named were measured and neither accounted for it, and colocation
+recovered 12–15% without closing it.
+
+The `fetch_add` contrast that §7 does draw is with the `hi-perf-cmp` bench cell this crate
+was ported from, which claims with an unconditional `fetch_add(1)`. Against *that* design
+the bounded claim buys real properties (`try_send` can report `Full` without claiming a
+slot, and a blocked producer holds no unpublished hole for the consumer to reason about),
+at the cost of a CAS-retry loop.
+
+A batched claim (reserving a contiguous run of sequences per CAS) was the long-standing
+candidate for closing the gap. It is no longer: `disruptor` — the maintained Rust LMAX port,
+which ships exactly that design plus a bitmap availability structure — measures **27.2
+Melem/s against this crate's 33.2** in the table above, while doing *less* work per element
+(its pre-constructed in-place slots move no values and need no drop bookkeeping). The
+batched design measured slower than the one already shipped, so it is recorded as tried and
+rejected rather than pending. A reference implementation does not hide a lost benchmark, and
+does not keep advertising a fix it has since measured and dropped.
 
 ## Verification
 
