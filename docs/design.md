@@ -421,7 +421,22 @@ That cost is **not**, however, the explanation for the MPSC bake-off gap against
 success ordering than this crate's (`SeqCst` against `Relaxed`). The gap cannot be
 attributed to CAS-versus-`fetch_add` because that difference does not exist between these
 two crates. See the README's numbers section and §8; the honest position is that the
-dominant cost is still unidentified.
+dominant cost was, at the time that paragraph was written, still unidentified.
+
+**A later round found the cost. It is the CAS retry loop. The cost is the rate of
+the retries, not the retry itself.**
+
+The claim CAS fails 22 to 42% of the time with 2 to 4 producers. An immediate
+retry strikes the contended `claim` line again as fast as the core permits.
+
+An exponential `spin_loop` backoff puts more space between the retries. It grows
+1, 2, 4 up to 64. It resets on each `try_send` call. It is worth +108% to +143%
+across all three `mpsc_layout_probe` configurations. It moves the head-to-head
+result from 0.55x to 1.26x compared to crossbeam-channel. See
+`docs/bench-results/2026-08-11-cas-backoff.md`.
+
+§7 was correct to name the CAS retry loop as a cost. One assumption was wrong:
+that only fewer claims could pay that cost down.
 
 **`& mask` instead of `%` for slot indexing.** Both rings index the physical buffer with
 `seq & (cap - 1)` rather than `seq % cap`, matching the bench cells' own indexing convention.

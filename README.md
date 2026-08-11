@@ -85,7 +85,7 @@ measures `ultima_rings` throughput head-to-head against `crossbeam-channel`, `fl
 | SPSC | kanal | 4.9 | 4.8 – 10.9 | 0.13× ⚠ |
 | MPSC (2 producers) | **ultima_rings `sharded`** (experimental) | **317.4** | 309.4 – 329.8 | **5.28×** |
 | MPSC (2 producers) | crossbeam-channel | 60.1 | 59.4 – 60.6 | 1.00× |
-| MPSC (2 producers) | **ultima_rings `BusySpin`** | **35.1** | 34.5 – 35.4 | **0.58×** |
+| MPSC (2 producers) | **ultima_rings `BusySpin`** ‡ | **76.4** | 76.3 – 76.7 | **1.26×** |
 | MPSC (2 producers) | flume | 7.8 | 7.5 – 7.8 | 0.13× |
 | MPSC (2 producers) | kanal | 6.0 | 5.4 – 9.1 | 0.10× ⚠ |
 | MPSC (2 producers) | `disruptor` (batched consume) † | 27.2 | 25.6 – 27.7 | 0.45× |
@@ -122,19 +122,21 @@ changed about the box, and that has not been diagnosed. Note also that this crat
 uses batched consumption while competitors single-pop, so the comparison is not
 like-for-like on API shape.
 
-**MPSC trails `crossbeam-channel` at 0.58× its throughput** (0.49× against crossbeam's
-best-ever figure on this box, 71.25, which is the least favourable denominator available) —
-under this 2-producer/4-core contention shape. Both designs now colocate their per-slot
-round/stamp with the payload (`docs/design.md` §8), so the gap does not trace to slot layout.
+‡ **MPSC now leads `crossbeam-channel` at 1.26× its throughput.** Earlier revisions of this
+section recorded it trailing at 0.58×, and treated the reason as undiagnosed. It is
+diagnosed: the claim CAS fails 22–42% of the time under 2–4 producers, and retrying it
+immediately re-attacks the contended cursor line as fast as the core allows. An exponential
+`spin_loop` backoff between failed attempts is worth **+108% to +143%** across three
+configurations (`docs/bench-results/2026-08-11-cas-backoff.md`). This row is measured in a
+later session than the rest of the table; crossbeam was re-measured alongside it at 60.76,
+within 1% of its row above, so the two are comparable.
 
-**What the gap is not:** earlier revisions of this section said crossbeam wins via a
-`fetch_add` claim. That is wrong — `crossbeam-channel`'s array flavor contains no
-`fetch_add` at all, claiming with `compare_exchange_weak` on `tail` (and on `head` for its
-consumer, since it is MPMC). Both crates do one CAS per element on a contended cursor, and
-this crate's is the *weaker* ordering of the two (`Relaxed/Relaxed` against crossbeam's
-`SeqCst/Relaxed`). The remaining gap is therefore **not diagnosed**; the two levers
-`docs/design.md` §7 and §8 named were measured and neither accounted for it, and colocation
-recovered 12–15% without closing it.
+**What the gap was not:** earlier revisions said crossbeam wins via a `fetch_add` claim.
+That is wrong — `crossbeam-channel`'s array flavor contains no `fetch_add` at all, claiming
+with `compare_exchange_weak` on `tail` (and on `head` for its consumer, since it is MPMC).
+Both crates do one CAS per element on a contended cursor, and this crate's is the *weaker*
+ordering of the two (`Relaxed/Relaxed` against crossbeam's `SeqCst/Relaxed`). The difference
+was never the claim instruction — it was how hard each crate retries after a failed one.
 
 The `fetch_add` contrast that §7 does draw is with the `hi-perf-cmp` bench cell this crate
 was ported from, which claims with an unconditional `fetch_add(1)`. Against *that* design
