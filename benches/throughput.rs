@@ -755,6 +755,84 @@ fn bakeoff_disruptor_mpsc(c: &mut Criterion) {
 // Filter-only by design: `cargo bench -- mpsc_layout_probe`.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Producer ladder: the same MPSC workload from 2 up to 64 producers, at a fixed
+// capacity. `mpsc_layout_probe` covers only 2 and 4 producers, and two of its
+// three cells share the same producer count — so every claim-CAS backoff result
+// so far rests on at most 4 producers on a 4-core box.
+//
+// That is the wrong place to stop for a *backoff* parameter specifically. A
+// backoff is a scheduling interaction: once threads outnumber cores a producer
+// can be descheduled part-way through its wait, and the best ceiling can move.
+// This ladder crosses the core count (4) so that region is measured rather than
+// assumed.
+//
+// Note on interpretation: thread spawn cost per iteration grows with the
+// producer count, and at 64 producers it is a large share of the measurement.
+// That cost is identical across backoff ceilings, so it compresses the relative
+// differences between them without biasing which one wins. Compare ceilings
+// within a producer count; do not compare throughput across producer counts.
+// ---------------------------------------------------------------------------
+
+fn mpsc_producer_ladder(c: &mut Criterion) {
+    let mut g = c.benchmark_group("mpsc_producer_ladder");
+    g.throughput(Throughput::Elements(BATCH));
+    for producers in [2usize, 4, 8, 16, 32, 64] {
+        g.bench_function(format!("p{producers}"), |b| {
+            b.iter_custom(|iters| {
+                let mut total = std::time::Duration::ZERO;
+                for _ in 0..iters {
+                    let (tx, mut rx) = mpsc::channel::<u64>(1024, WaitStrategy::BusySpin);
+                    let barrier = Arc::new(Barrier::new(producers + 1));
+                    let per = BATCH / producers as u64;
+                    let mut handles = Vec::new();
+                    for _ in 0..producers {
+                        let mut tx = tx.clone();
+                        let barrier = Arc::clone(&barrier);
+                        handles.push(thread::spawn(move || {
+                            barrier.wait();
+                            for i in 0..per {
+                                let mut v = i;
+                                loop {
+                                    match tx.try_send(v) {
+                                        Ok(()) => break,
+                                        Err(TrySendError::Full(b)) => {
+                                            v = b;
+                                            std::hint::spin_loop();
+                                        }
+                                        Err(TrySendError::Disconnected(_)) => return,
+                                    }
+                                }
+                            }
+                        }));
+                    }
+                    drop(tx);
+                    barrier.wait();
+                    let t = Instant::now();
+                    let target = per * producers as u64;
+                    let mut got = 0u64;
+                    loop {
+                        match rx.try_recv() {
+                            Ok(_) => got += 1,
+                            Err(TryRecvError::Empty) => std::hint::spin_loop(),
+                            Err(TryRecvError::Disconnected) => break,
+                        }
+                        if got == target {
+                            break;
+                        }
+                    }
+                    total += t.elapsed();
+                    for h in handles {
+                        h.join().unwrap();
+                    }
+                }
+                total
+            })
+        });
+    }
+    g.finish();
+}
+
 fn mpsc_layout_probe(c: &mut Criterion) {
     let mut g = c.benchmark_group("mpsc_layout_probe");
     g.throughput(Throughput::Elements(BATCH));
@@ -820,7 +898,8 @@ criterion_group!(
     bakeoff_mpsc,
     bakeoff_park_mpsc,
     bakeoff_disruptor_mpsc,
-    mpsc_layout_probe
+    mpsc_layout_probe,
+    mpsc_producer_ladder
 );
 
 #[cfg(feature = "experimental-sharded")]
