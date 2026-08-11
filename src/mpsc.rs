@@ -20,6 +20,10 @@ use crate::notify::{Parker, WaiterList};
 use crate::wait::WaitStrategy;
 use crate::{TryRecvError, TrySendError, assert_cap};
 
+/// Ceiling on the claim-CAS backoff, in `spin_loop()` hints. Matches
+/// crossbeam-utils' `Backoff` spin ceiling (2^6).
+const CLAIM_BACKOFF_MAX: u32 = 64;
+
 /// One ring slot: the availability round and its payload in a single struct, so
 /// that a publish or a consume touches ONE cache line rather than two.
 ///
@@ -149,6 +153,14 @@ impl<T: Send> Sender<T> {
         // consumed (seq - head < cap). Head only advances, so a successful
         // CAS keeps the bound.
         let mut seq = sh.claim.0.load(Ordering::Relaxed);
+        // EXPERIMENT: exponential backoff between failed claim CASes. Measured
+        // at 22-42% CAS failure under 2-4 producers
+        // (docs/bench-results/2026-08-09-mpsc-hotpath-analysis.md), and an
+        // immediate retry hammers the contended `claim` line as fast as the
+        // core allows. crossbeam-channel spaces its retries this way; the
+        // maintained Rust LMAX port does not. Purely a timing change: no
+        // ordering, no atomic, no semantics moved.
+        let mut backoff = 1u32;
         loop {
             // Check if ring is full by comparing seq >= cached_head + cap
             // instead of subtracting to avoid underflow in debug mode.
@@ -165,7 +177,13 @@ impl<T: Send> Sender<T> {
                 Ordering::Relaxed,
             ) {
                 Ok(_) => break,
-                Err(cur) => seq = cur,
+                Err(cur) => {
+                    seq = cur;
+                    for _ in 0..backoff {
+                        std::hint::spin_loop();
+                    }
+                    backoff = (backoff * 2).min(CLAIM_BACKOFF_MAX);
+                }
             }
         }
         let slot = &sh.slots[seq & sh.mask];
