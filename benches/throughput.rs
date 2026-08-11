@@ -774,6 +774,105 @@ fn bakeoff_disruptor_mpsc(c: &mut Criterion) {
 // within a producer count; do not compare throughput across producer counts.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Backoff isolation: a 2x2 of wait strategy against API path.
+//
+// The claim-CAS backoff is worth +108% to +143% under `BusySpin`
+// (2026-08-11-cas-backoff.md) and costs 23% under `Park`
+// (2026-08-11-bakeoff-v3.md). Those two measurements differ in TWO ways at
+// once: the `BusySpin` cells drive `try_send`/`try_recv` in a harness retry
+// loop, while the `Park` cell drives blocking `send`/`recv`. Either the
+// strategy or the path could carry the cost.
+//
+// This group holds one axis fixed at a time:
+//
+//                  polling (try_*)      blocking (send/recv)
+//   BusySpin       busyspin_poll        busyspin_block
+//   Park           park_poll            park_block
+//
+// Run each cell with and without the backoff; the per-cell delta says which
+// axis the cost attaches to. If both `Park` cells regress and neither
+// `BusySpin` cell does, it is the strategy. If both blocking cells regress and
+// neither polling cell does, it is the path. If only `park_block` regresses, it
+// is the interaction and neither factor alone explains it.
+//
+// Note `try_send` performs the `Park` fence and consumer wake whenever the
+// channel's strategy is `Park`, whichever path the caller used — so `park_poll`
+// pays the per-publish wake cost without either side ever parking.
+// ---------------------------------------------------------------------------
+
+fn backoff_isolation(c: &mut Criterion) {
+    let mut g = c.benchmark_group("backoff_isolation");
+    g.throughput(Throughput::Elements(BATCH));
+    for (name, strategy, blocking) in [
+        ("busyspin_poll", WaitStrategy::BusySpin, false),
+        ("busyspin_block", WaitStrategy::BusySpin, true),
+        ("park_poll", WaitStrategy::Park, false),
+        ("park_block", WaitStrategy::Park, true),
+    ] {
+        g.bench_function(name, |b| {
+            b.iter_custom(|iters| {
+                let mut total = std::time::Duration::ZERO;
+                for _ in 0..iters {
+                    let (tx, mut rx) = mpsc::channel::<u64>(1024, strategy);
+                    let barrier = Arc::new(Barrier::new(3));
+                    let mut handles = Vec::new();
+                    for _ in 0..2 {
+                        let mut tx = tx.clone();
+                        let barrier = Arc::clone(&barrier);
+                        handles.push(thread::spawn(move || {
+                            barrier.wait();
+                            for i in 0..BATCH / 2 {
+                                if blocking {
+                                    if tx.send(i).is_err() {
+                                        return;
+                                    }
+                                } else {
+                                    let mut v = i;
+                                    loop {
+                                        match tx.try_send(v) {
+                                            Ok(()) => break,
+                                            Err(TrySendError::Full(b)) => {
+                                                v = b;
+                                                std::hint::spin_loop();
+                                            }
+                                            Err(TrySendError::Disconnected(_)) => return,
+                                        }
+                                    }
+                                }
+                            }
+                        }));
+                    }
+                    drop(tx);
+                    barrier.wait();
+                    let t = Instant::now();
+                    let mut got = 0u64;
+                    while got < BATCH {
+                        if blocking {
+                            match rx.recv() {
+                                Ok(_) => got += 1,
+                                Err(_) => break,
+                            }
+                        } else {
+                            match rx.try_recv() {
+                                Ok(_) => got += 1,
+                                Err(TryRecvError::Empty) => std::hint::spin_loop(),
+                                Err(TryRecvError::Disconnected) => break,
+                            }
+                        }
+                    }
+                    total += t.elapsed();
+                    for h in handles {
+                        h.join().unwrap();
+                    }
+                }
+                total
+            })
+        });
+    }
+    g.finish();
+}
+
 fn mpsc_producer_ladder(c: &mut Criterion) {
     let mut g = c.benchmark_group("mpsc_producer_ladder");
     g.throughput(Throughput::Elements(BATCH));
@@ -899,7 +998,8 @@ criterion_group!(
     bakeoff_park_mpsc,
     bakeoff_disruptor_mpsc,
     mpsc_layout_probe,
-    mpsc_producer_ladder
+    mpsc_producer_ladder,
+    backoff_isolation
 );
 
 #[cfg(feature = "experimental-sharded")]
