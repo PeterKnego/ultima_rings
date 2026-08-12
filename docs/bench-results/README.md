@@ -71,6 +71,18 @@ strategy comparison drawn at or below core count does not transfer above it,
 which is how this directory briefly concluded that `BackoffYield` had no
 purpose.
 
+**And *what* the extra threads are doing reorders them again.** Oversubscribing
+with the channel's own producers favours yielding; oversubscribing with threads
+that never touch the channel favours parking, because yielding to a stranger
+surrenders a slice and gets nothing back. `Park` goes from worst in every idle
+table to best and most stable under external load.
+
+**A wait strategy has a cost that lands outside the benchmark.** Measured as the
+external threads' throughput relative to running alone: `Backoff` 98%,
+`BackoffYield` 96%, `Park` 86%, `BusySpin` **77%**. Nothing in a throughput
+table can see a quarter of the machine's useful work being taken from the rest
+of the process.
+
 ## 3. Three rounds is a screen, not a decision
 
 Twice in one session a three-round result reversed under five rounds:

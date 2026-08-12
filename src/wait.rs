@@ -36,6 +36,29 @@
 //! spinner burns the core the thread it is waiting on needs; it also becomes
 //! wildly unstable there (4.71–19.93 across three runs at p32). `Park` is the
 //! slowest everywhere and the only strategy indifferent to the ratio.
+//!
+//! **That table oversubscribes with the channel's own producers. Doing it with
+//! unrelated threads reverses the ranking.** With 2 producers + 1 consumer plus
+//! four CPU-bound threads that never touch the channel, `Park` is fastest and
+//! by far the most stable, while `BusySpin`, `BackoffYield` and `Backoff` land
+//! within noise of one another. Yielding pays only when the thread you yield to
+//! is the one you are waiting on; yielding to a stranger surrenders a slice and
+//! returns nothing, whereas parking leaves the runqueue entirely.
+//!
+//! The same measurement gives the figure this crate is otherwise silent on —
+//! what a wait strategy costs the code around it, as a fraction of the external
+//! threads' throughput running alone:
+//!
+//! | strategy | external throughput kept |
+//! |---|---:|
+//! | `Backoff` | 98% |
+//! | `BackoffYield` | 96% |
+//! | `Park` | 86% |
+//! | `BusySpin` | **77%** |
+//!
+//! A `BusySpin` consumer takes roughly a quarter of the machine's useful work
+//! away from the rest of the process. Budget for that, not just for the core it
+//! holds.
 
 use std::time::Duration;
 
