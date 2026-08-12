@@ -1,0 +1,8 @@
+# Never commit credentials, state, or machine-specific config.
+.env
+terraform.tfvars
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+bench-out/

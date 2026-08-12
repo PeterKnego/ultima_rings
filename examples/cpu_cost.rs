@@ -39,6 +39,25 @@ use ultima_rings::{TryRecvError, TrySendError, WaitStrategy, mpsc};
 const BATCH: u64 = 1_000_000;
 const CAP: usize = 1024;
 const PRODUCERS: u64 = 2;
+
+/// Cores this run should size itself against. Thread counts here are ratios of
+/// this rather than constants, so a sweep across machines compares like with
+/// like: "2x oversubscribed" means the same thing on 2 cores and on 16.
+///
+/// Defaults to `available_parallelism`, which counts SMT siblings as cores.
+/// Override with `URINGS_CORES` when pinning to physical cores with `taskset`,
+/// because a hyperthread is not a core for a spin-wait workload — two spinners
+/// on sibling threads contend for one core's execution units.
+fn cores() -> u64 {
+    std::env::var("URINGS_CORES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|n| n.get() as u64)
+                .unwrap_or(4)
+        })
+}
 /// Iterations per measurement. Large enough that the ~50 us of thread-spawn
 /// cost per iteration stays near 1% of the total.
 const ITERS: u64 = 5;
@@ -55,8 +74,24 @@ const OVER_BATCH: u64 = 200_000;
 const OVER_ITERS: u64 = 3;
 
 /// External-load section: CPU-bound threads that are not part of the channel,
-/// which is the ordinary case — a service whose pool is already busy.
-const EXT_THREADS: usize = 4;
+/// which is the ordinary case — a service whose pool is already busy. One per
+/// core, so the machine is exactly saturated before the channel is added.
+fn ext_threads() -> usize {
+    cores() as usize
+}
+
+/// Producer counts for the oversubscription sweep, as multiples of the core
+/// count: half-saturated, saturated, 2x and 8x. Reported alongside the ratio so
+/// rows from different machines line up.
+fn producer_ladder() -> Vec<(u64, &'static str)> {
+    let c = cores();
+    vec![
+        ((c / 2).max(2), "0.5x"),
+        (c.max(2), "1x"),
+        ((c * 2).max(4), "2x"),
+        ((c * 8).max(8), "8x"),
+    ]
+}
 
 /// Nanoseconds this thread has spent on CPU, from `/proc/thread-self/schedstat`.
 ///
@@ -287,6 +322,14 @@ fn report(name: &str, runs: &mut [Run]) {
 
 fn main() {
     println!(
+        "sized against {} cores (URINGS_CORES to override; \
+         available_parallelism = {})\n",
+        cores(),
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(0)
+    );
+    println!(
         "2 producers -> 1 consumer, cap {CAP}, {BATCH} u64 per iteration, \
          {ITERS} iterations per run, median of {ROUNDS}\n"
     );
@@ -504,16 +547,17 @@ fn main() {
     // -----------------------------------------------------------------------
     println!(
         "\n\nOversubscribed: blocking send/recv, {OVER_BATCH} elements, \
-         {OVER_ITERS} iterations, median of {ROUNDS}.\nThis box has 4 cores, so \
-         p8 is 2x oversubscribed and p32 is 8x.\n"
+         {OVER_ITERS} iterations, median of {ROUNDS}.\nProducer counts are \
+         multiples of the {} cores this run is sized against.\n",
+        cores()
     );
     println!(
-        "{:<22} {:>9} {:>9} {:>8} {:>12}",
-        "strategy", "producers", "Melem/s", "cores", "cpu ns/elem"
+        "{:<22} {:>9} {:>6} {:>9} {:>8} {:>12}",
+        "strategy", "producers", "ratio", "Melem/s", "cores", "cpu ns/elem"
     );
-    println!("{}", "-".repeat(64));
+    println!("{}", "-".repeat(71));
 
-    for producers in [2u64, 8, 32] {
+    for (producers, ratio) in producer_ladder() {
         for (name, strat) in [
             ("BusySpin", WaitStrategy::BusySpin),
             ("BackoffYield", WaitStrategy::BackoffYield),
@@ -539,9 +583,10 @@ fn main() {
             });
             let m = &runs[runs.len() / 2];
             println!(
-                "{:<22} {:>9} {:>9.2} {:>8.2} {:>12.1}",
+                "{:<22} {:>9} {:>6} {:>9.2} {:>8.2} {:>12.1}",
                 name,
                 producers,
+                ratio,
                 m.melem_per_s(),
                 m.cores(),
                 m.cpu_ns_per_elem(),
@@ -564,7 +609,8 @@ fn main() {
     // measurable difference is whether a waiting thread *uses* its share or
     // hands it back.
     // -----------------------------------------------------------------------
-    let (stop, hs) = spawn_external(EXT_THREADS);
+    let ext = ext_threads();
+    let (stop, hs) = spawn_external(ext);
     let t = Instant::now();
     thread::sleep(std::time::Duration::from_secs(1));
     let base_wall = t.elapsed();
@@ -572,9 +618,11 @@ fn main() {
     let baseline = base_ops as f64 / base_wall.as_secs_f64();
 
     println!(
-        "\n\nExternal load: 2 producers + 1 consumer, plus {EXT_THREADS} \
-         CPU-bound threads outside the channel.\n7 threads on 4 cores. Baseline \
-         is those {EXT_THREADS} threads alone: {:.0} Mops/s.\n",
+        "\n\nExternal load: 2 producers + 1 consumer, plus {ext} CPU-bound \
+         threads outside the channel.\n{} threads on {} cores. Baseline is those \
+         {ext} threads alone: {:.0} Mops/s.\n",
+        ext + 3,
+        cores(),
         baseline / 1e6
     );
     println!(
@@ -591,7 +639,7 @@ fn main() {
     ] {
         let mut rows: Vec<(f64, f64, f64)> = (0..ROUNDS)
             .map(|_| {
-                let (stop, hs) = spawn_external(EXT_THREADS);
+                let (stop, hs) = spawn_external(ext);
                 let run = measure_with(
                     2,
                     OVER_BATCH,
