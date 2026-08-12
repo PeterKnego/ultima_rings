@@ -257,15 +257,20 @@ tables in this directory does not survive contact with a busy process.
 
 # Part 3: a payload that owns memory
 
-> **This section's central conclusion reverses on a larger machine.**
-> `2026-08-12-topology-sweep.md` re-ran the bake-off at 16 physical cores: this
-> crate is **2.07x ahead** of thingbuf's reference API on `String`, where the
-> 1.82x below has it behind. The by-value penalty measured at 3.31x below is
-> also gone at 16 cores (3.46 by value against 3.32 by reference).
+> **This section's central conclusion does not replicate on another machine.**
+> `2026-08-12-topology-sweep.md` re-ran the bake-off at `smt2x2` — 4 CPUs on 2
+> physical cores, this VM's exact shape, on an Intel host — and got **0.531x**
+> where the measurement below gives **3.199x**. Same topology, 6x apart,
+> opposite sides of crossbeam.
 >
-> The numbers below stand for two CPUs. What does not stand is the
-> generalization — "payload sensitivity is the mechanism" is true on a small
-> machine and does not survive the move to a large one.
+> Part of the gap is that `taskset` does not constrain glibc's malloc arena
+> pool, which is sized from the whole machine and flatters the move-based
+> crates; a probe puts that at roughly 17% of the difference. The rest is
+> unexplained.
+>
+> **Quote nothing directional from this section.** The numbers are what this VM
+> produced; the comparison does not survive a change of machine, and an earlier
+> revision of this note blamed core count, which was also wrong.
 
 `bakeoff_mpsc_string` is the same harness with a 64-byte `String`. Producers
 build a message per element, which is what a logging or serialization pipeline
@@ -314,12 +319,9 @@ The same crates, the same harness, switching only the payload:
 Every move-based design loses an order of magnitude to the allocator. The
 slot-owning design loses 1.6x.
 
-**On two CPUs.** At 16 cores the ordering flips and thingbuf's `String`
-throughput actually *falls* (5.79 → 3.32) while every move-based competitor
-roughly doubles. The leading explanation is that recycling wins while allocation
-is the bottleneck and threads are scheduling-starved, and stops winning once
-threads genuinely run in parallel and per-thread allocator arenas make `String`
-allocation cheap. Not measured — no allocator counters were collected.
+**On this VM.** The ordering is the other way round on an Intel host at the same
+topology, so this paragraph describes one machine and not a design property. See
+the replication section of `2026-08-12-topology-sweep.md`.
 
 ## thingbuf's by-value API discards everything the crate is for
 
@@ -337,9 +339,9 @@ gets the worst cell in this table.
 ## What this crate could take from it
 
 **Much less than it looked.** The 1.82x gap that motivated this section is a
-two-CPU result; at 16 cores this crate is 2.07x ahead. Task #28 (record a design
-decision on `Ref<T>`-style access) should be answered with "measured, does not
-generalize" rather than with a redesign.
+one-machine result: at matched topology on an Intel host this crate is 1.9x
+ahead instead. Task #28 (record a design decision on `Ref<T>`-style access) is
+answered with "measured, does not replicate" rather than with a redesign.
 
 Nothing here suggests copying `Ref<T>` wholesale — the survey
 (`2026-08-06-thingbuf-survey.md`) already catalogued its costs: every operation

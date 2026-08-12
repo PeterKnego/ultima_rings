@@ -233,6 +233,100 @@ The phys2 column also shows crossbeam's blocking path at 35.19 against its own
 polling path at 6.28. At three threads on two CPUs, parking beats spinning by
 5.6x for the same crate, which is finding 2 again from a different direction.
 
+---
+
+# Replication at matched topology: the `u64` cells hold, the `String` cell does not
+
+The bake-off was re-run at `smt2x2` — 4 CPUs on 2 physical cores, the original
+VM's exact shape — plus `phys4` (4 CPUs on 4 *real* cores, to isolate SMT) and
+`phys2` as a cross-session anchor. Ratios against crossbeam, because absolutes
+do not transfer between an AMD EPYC-Milan VM and an Intel Sapphire Rapids host.
+
+| cell | VM (4cpu/2core) | smt2x2 | phys4 | phys2 |
+|---|---:|---:|---:|---:|
+| `mpsc/ultima` | 1.239x | 1.084x | 1.605x | 0.792x |
+| `mpsc/thingbuf_ref` | 0.318x | 0.153x | 0.289x | 1.125x |
+| `mpsc/thingbuf` | 0.256x | 0.156x | 0.323x | 1.107x |
+| `mpsc/flume` | 0.135x | 0.185x | 0.308x | 0.459x |
+| `mpsc/kanal` | 0.125x | 0.028x | 0.036x | 0.049x |
+| **`string/thingbuf_ref`** | **3.199x** | **0.531x** | 0.472x | 1.960x |
+| `string/ultima` | 1.758x | 1.145x | 0.837x | 0.902x |
+| `string/thingbuf` | 0.967x | 0.622x | 0.474x | 0.740x |
+| `park/thingbuf_blocking` | 0.485x | 0.159x | 0.208x | 0.748x |
+| `park/ultima_park` | 0.290x | 0.264x | 0.253x | 0.092x |
+
+## The `u64` and `Park` results replicate
+
+`ultima` leads crossbeam by 1.08x–1.61x everywhere except `phys2`, where all
+three threads contend for two CPUs and nothing is measuring the ring. The VM's
+1.239x sits inside that band. **The crate's headline claim is machine- and
+topology-robust.**
+
+`ultima_park` is the tightest cell in the table: 0.290x on the VM, 0.264x at
+`smt2x2`, 0.253x at `phys4`. `Park`'s weakness against crossbeam's blocking path
+reproduces almost exactly across architectures.
+
+SMT costs little at matched CPU count. `smt2x2` against `phys4` is 4 CPUs either
+way, and the `String` and `Park` cells sit within 15% of each other. **CPU count
+dominates; whether those CPUs are siblings barely matters** — the same conclusion
+finding 2 reached from the `cpu_cost` side.
+
+## The `String` cell does not replicate, and the earlier explanation was wrong
+
+`string/thingbuf_ref` is **3.199x** on the VM and **0.531x** at `smt2x2` — the
+same nominal topology, 6x apart, opposite sides of crossbeam.
+
+So the reversal reported in the section above is **not** a core-count effect. It
+was attributed to core count because the only two points measured then were
+`phys2` and `phys16`; adding `smt2x2` and `phys4` shows the VM disagreeing with
+the same topology on different silicon.
+
+### glibc arenas explain a minority of it
+
+`taskset` restricts which CPUs a process runs on but **not what the C library
+thinks the machine is** — glibc sizes its malloc arena pool from
+`_SC_NPROCESSORS_ONLN`, which is 32 on the bench host at every pinned point and
+4 on the VM. More arenas mean less allocator contention, which flatters exactly
+the move-based crates that allocate per element.
+
+Measured at `smt2x2` (`raw/2026-08-12-topology/arena-probe.txt`):
+
+| `MALLOC_ARENA_MAX` | ultima | crossbeam | thingbuf | thingbuf_ref |
+|---|---:|---:|---:|---:|
+| 0 (default) | 8.29 | 6.91 | 4.65 | 4.03 |
+| 2 | 6.96 | 6.00 | 3.92 | 4.50 |
+| 1 | 6.68 | 5.08 | 3.72 | 3.79 |
+
+Constraining arenas costs the move-based crates 19–26% and `thingbuf_ref`, which
+allocates least, only 6%. The direction confirms the mechanism. But
+`thingbuf_ref/ultima` moves only 0.486 → 0.568 — about **17% of the way** to the
+VM's 1.82. **Arenas are part of the story and not most of it.** The remainder is
+unexplained and was not chased further.
+
+### What to conclude about the heap-payload comparison
+
+**Nothing directional.** This cell disagrees by 6x between two machines at
+matched topology, and its ordering also changes between 2 and 4 CPUs on one
+machine. It is the least trustworthy cell in the roster and should be quoted
+only with both a machine and a CPU count, or not at all.
+
+Two earlier statements are therefore withdrawn as general claims:
+
+| claim | status |
+|---|---|
+| "thingbuf's reference API is 1.82x this crate on heap payloads" (`2026-08-12-cpu-cost-and-heap-payload.md`) | true of that VM only |
+| "the heap-payload result reverses with core count" (this document, above) | wrong explanation — it varies with the machine, and arenas cover ~17% |
+
+The measurements stand; both generalizations do not.
+
+## Cross-session anchor
+
+`phys2` ran in both sessions on separate instances of the same type. Ratios
+against crossbeam: `ultima` 0.69x → 0.79x, `thingbuf_ref` 0.96x → 1.13x,
+`string/thingbuf_ref` 1.57x → 1.96x, `ultima_park` 0.102x → 0.092x. Same
+ordering throughout, magnitudes within roughly 25%. Cross-session comparison at
+this precision is usable for direction and not for two significant figures.
+
 ## What has to change
 
 - **`src/wait.rs`** must state the core count beside every oversubscription
@@ -255,12 +349,13 @@ polling path at 6.28. At three threads on two CPUs, parking beats spinning by
   a claim cursor would be expected to behave worst.
 - **SMT points are limited to `smt2x2` and `smt8x2`.** The interaction of SMT
   with oversubscription at large core counts is not mapped.
-- **The bake-off ran only at `phys16` and `phys2`, not at `smt2x2`.** So no
-  bake-off cell reproduces the original VM's exact topology. `phys2` gives a
-  similar `String` ratio (1.93x against the VM's 1.82x) but reaches it with 3
-  threads on 2 CPUs rather than on 4, which finding 2 shows is a materially
-  different condition. The crossover between 2 CPUs and 16 is solid; the precise
-  comparison against the old box is not.
+- ~~The bake-off ran only at `phys16` and `phys2`.~~ Closed: `smt2x2` and
+  `phys4` were added, and they show the `String` cell failing to replicate. See
+  the replication section.
+- **`taskset` does not constrain the allocator, the Rust runtime, or anything
+  else reading `_SC_NPROCESSORS_ONLN`.** Every pinned point on this host still
+  sees 32 CPUs. For allocation-bound cells that is a genuine confound, only
+  partly quantified here.
 - **No cpufreq control.** EC2 exposes no governor; turbo is on. Deliberate — see
   `bench-infra/README.md`.
 - **Absolute values do not transfer** to or from the original VM. Only the

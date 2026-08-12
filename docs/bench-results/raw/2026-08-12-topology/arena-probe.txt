@@ -1,0 +1,14 @@
+# glibc arena probe, smt2x2 (cpus 0,16,1,17), bakeoff_mpsc_string, one round.
+# Tests whether the machine-to-machine disagreement on the String cell is
+# explained by glibc arena count, which taskset does NOT constrain
+# (arenas derive from _SC_NPROCESSORS_ONLN = 32 here, 4 on the original VM).
+#
+# MALLOC_ARENA_MAX   ultima  crossbeam  thingbuf  thingbuf_ref
+# 0 (default)          8.29       6.91      4.65          4.03
+# 2                    6.96       6.00      3.92          4.50
+# 1                    6.68       5.08      3.72          3.79
+#
+# Move-based crates lose 19-26% when arenas are constrained; thingbuf_ref,
+# which allocates least, loses 6%. Direction confirms the mechanism.
+# But thingbuf_ref/ultima only moves 0.486 -> 0.568, about 17% of the way to
+# the VM's 1.82. Arenas explain a minority of the disagreement.

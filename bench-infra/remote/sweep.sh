@@ -62,6 +62,7 @@ run_point() {
 
 # --- physical-core sweep --------------------------------------------------
 # 1 thread per core: the honest "N cores" condition.
+if [ "${SKIP_CPUCOST:-0}" != "1" ]; then
 for n in 2 4 8 16; do
   [ "$n" -le "$NPHYS" ] || continue
   run_point "phys${n}" "$(take "$n" "${CORE_FIRST[@]}")" "$n"
@@ -77,19 +78,43 @@ if [ "$NPHYS" -ge 2 ] && [ "$NCPU" -gt "$NPHYS" ]; then
     run_point "smt8x2" "$(take 8 "${CORE_ALL[@]}")" 16
   fi
 fi
+fi
 
 # --- bake-off -------------------------------------------------------------
-# Criterion is slow, so only at the two points that matter: the full machine,
-# and the 2-physical-core shape that reproduces the existing directory.
+# Criterion is slow, so the points are explicit rather than the full sweep.
+# BAKEOFF_POINTS is a space-separated list of labels understood below; the
+# default pair is the full machine and the 2-CPU corner.
+#
+# The interesting pairs are matched on *CPU count*, not core count:
+#   smt2x2 vs phys4  — 4 CPUs either way, 2 physical cores against 4. Isolates
+#                      what SMT costs when the runqueue slots are equal.
+#   smt2x2           — the shape of the VM that produced the pre-2026-08-12
+#                      results, so it is the replication check.
+cpus_for() {
+  case "$1" in
+    full)    take "$NPHYS" "${CORE_FIRST[@]}" ;;
+    phys2)   take 2  "${CORE_FIRST[@]}" ;;
+    phys4)   take 4  "${CORE_FIRST[@]}" ;;
+    phys8)   take 8  "${CORE_FIRST[@]}" ;;
+    phys16)  take 16 "${CORE_FIRST[@]}" ;;
+    smt2x2)  take 2  "${CORE_ALL[@]}" ;;
+    smt8x2)  take 8  "${CORE_ALL[@]}" ;;
+    *) echo "unknown bakeoff point: $1" >&2; return 1 ;;
+  esac
+}
+
 if [ "${SKIP_BAKEOFF:-0}" != "1" ]; then
-  for spec in "full:$(take "$NPHYS" "${CORE_FIRST[@]}")" "phys2:$(take 2 "${CORE_FIRST[@]}")"; do
-    label="${spec%%:*}"; cpus="${spec#*:}"
+  for label in ${BAKEOFF_POINTS:-full phys2}; do
+    cpus="$(cpus_for "$label")" || continue
     echo "=== bakeoff $label (cpus=$cpus) ==="
-    for r in 1 2 3; do
-      taskset -c "$cpus" cargo bench --bench throughput -- \
-        'bakeoff_mpsc/|bakeoff_mpsc_string/|bakeoff_park_mpsc/' 2>&1 \
-        | grep -E '^bakeoff|thrpt:  \[[0-9]'
-    done | tee "$OUT/bakeoff.${label}.txt"
+    {
+      echo "=== bakeoff $label ==="
+      for r in 1 2 3; do
+        taskset -c "$cpus" cargo bench --bench throughput -- \
+          'bakeoff_mpsc/|bakeoff_mpsc_string/|bakeoff_park_mpsc/' 2>&1 \
+          | grep -E '^bakeoff|thrpt:  \[[0-9]'
+      done
+    } | tee "$OUT/bakeoff.${label}.txt"
   done
 fi
 
