@@ -6,20 +6,45 @@ number in this directory can carry.
 
 ## 1. There is a resolution floor of roughly 10%
 
+> **Correction, 2026-08-12.** The evidence originally given for this section was
+> misdiagnosed. The claim that a *control* cell moved is wrong: that cell was
+> never a control. What the section says about the floor may still hold, but it
+> rested on a bad inference and is being re-derived by direct measurement. See
+> "What the original evidence actually showed" below.
+
 **Differences below about 10% between two builds cannot be resolved here, no
 matter how many rounds are run.**
 
-This was found by a control that behaved impossibly. While gating the pre-park
-spin (`2026-08-11-backoff-isolation.md` and the `feat/park-prespin` branch), the
-`busyspin_block` cell moved **+10.4% with clean separation across three
-interleaved rounds** — on a code path where the change provably never executes.
-The pre-park spin lives inside the `WaitStrategy::Park` arm of
-`Receiver::recv`; a `BusySpin` channel takes the `BusySpin` arm and never
-reaches it.
+### What the original evidence actually showed
 
-Consistent across interleaved rounds means it was not box drift. Adding code to
-`recv()` changed inlining or code layout, and that alone was worth ~10% on an
-untouched path.
+While gating the pre-park spin (`2026-08-11-backoff-isolation.md` and the
+`feat/park-prespin` branch), the `busyspin_block` cell moved **+10.4% with clean
+separation across three interleaved rounds**. This was written up as a control
+failure, on the grounds that the pre-park spin sits inside the
+`WaitStrategy::Park` arm of `Receiver::recv` and a `BusySpin` channel takes the
+`BusySpin` arm instead.
+
+That reasoning confused a dead *branch* with an unexecuted *function*.
+`busyspin_block` calls `recv()`. The pre-park spin added roughly twenty lines
+**inside** `recv()`, so `recv()` is a different function in the two builds — a
+different size, different inlining of `try_recv`, a different branch layout.
+`busyspin_block` was never a control.
+
+The four corners split exactly along that line:
+
+| corner | calls `recv()`? | delta |
+|---|---|---:|
+| `busyspin_poll` | no | +0.4% |
+| `park_poll` | no | −0.6% |
+| `busyspin_block` | **yes** | +10.4% |
+| `park_block` | **yes** | +16.0% |
+
+Both cells that avoid `recv()` show nothing. Both that call it moved up. That is
+consistent with a genuine codegen effect on `recv()`, and it is **not** evidence
+of random build-to-build layout bias.
+
+A true control must exercise no function the change touches — an SPSC cell, for
+instance, since `src/spsc.rs` is untouched by any MPSC work.
 
 **More rounds do not help.** Code layout is fixed per build, so repeating the
 same two binaries re-measures the same two layouts. Extra rounds reduce
@@ -73,6 +98,46 @@ clear of the floor above, or a five-round confirmation.
 - **Watch for byte-identical repeat numbers.** They mean a filter matched
   nothing and criterion re-reported a stale `estimates.json`, usually after a
   `git stash` took the bench code along with the source.
+
+## Roster gaps: surveyed crates that are not in the bake-off
+
+The bake-off currently measures crossbeam-channel, flume, kanal, rtrb (SPSC
+only) and `disruptor`. Two crates were surveyed in depth and never measured.
+
+**`thingbuf` — queued, blocked on the resolution-floor work above.** Its survey
+(`docs/superpowers/research/2026-08-06-thingbuf-survey.md`) calls it "the closest
+prior art": a fixed-capacity `MaybeUninit`-slot ring with an MPSC channel layer,
+loom-tested, the same shape as this crate. It is also load-bearing in the design
+document — §9 rejects Vyukov packed stamps citing thingbuf's issues #98 and
+#100, and §10's pitfall checklist draws on it as well. Rejecting a design partly
+on a crate's bug history while never measuring that crate is the most
+conspicuous gap in the roster.
+
+When it is added, note that its natural API is `push_ref`/`pop_ref` returning a
+`Ref<T>` for in-place slot reuse — the same ownership model as `disruptor`, where
+the queue never moves a `T`. That does strictly less work per element than a
+move-in `send(v)`, so it needs the same caveat the `disruptor` cells carry, and
+both its by-value and by-reference APIs should be measured separately if both
+exist.
+
+**`heapless::spsc::Queue` — not queued.** A second no-alloc SPSC comparator
+beside rtrb, and cited in §10 for the division-regression class (issue #650) that
+motivated this crate's `& mask` indexing. Const-generic capacity makes the
+usage model differ, though its `split()` erases `N` into a `ViewStorage`, which
+brings it closer to this crate's shape than it first appears.
+
+**`std::sync::mpsc` — not queued.** Unsurveyed because since Rust 1.67 it is
+crossbeam-derived, so a row would largely duplicate the crossbeam one. Still
+arguably worth adding, since it is the baseline most readers start from and
+showing "std is crossbeam here" empirically answers the first question they ask.
+
+**Not candidates.** `tokio::sync::mpsc` is async and linked-block rather than a
+ring. `concurrent-queue` (bounded MPMC, used by async-channel and smol) is
+genuinely relevant but unsurveyed, and this project's order is survey first,
+benchmark second — the `disruptor` round showed why.
+
+Nothing new should join the roster until the resolution floor is understood. A
+competitor measured at unknown resolution adds numbers, not knowledge.
 
 ## Cross-session comparison
 
