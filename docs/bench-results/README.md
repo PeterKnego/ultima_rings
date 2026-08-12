@@ -81,25 +81,22 @@ above, or a five-round confirmation.
 
 ## Roster gaps: surveyed crates that are not in the bake-off
 
-The bake-off currently measures crossbeam-channel, flume, kanal, rtrb (SPSC
-only) and `disruptor`. Two crates were surveyed in depth and never measured.
+The bake-off measures crossbeam-channel, flume, kanal, rtrb (SPSC only),
+`disruptor` and `thingbuf`.
 
-**`thingbuf` — queued and now unblocked.** The resolution work above is done, so
-the budget a new competitor would be measured against is known. Its survey
-(`docs/superpowers/research/2026-08-06-thingbuf-survey.md`) calls it "the closest
-prior art": a fixed-capacity `MaybeUninit`-slot ring with an MPSC channel layer,
-loom-tested, the same shape as this crate. It is also load-bearing in the design
-document — §9 rejects Vyukov packed stamps citing thingbuf's issues #98 and
-#100, and §10's pitfall checklist draws on it as well. Rejecting a design partly
-on a crate's bug history while never measuring that crate is the most
-conspicuous gap in the roster.
+**`thingbuf` — measured 2026-08-12** (`2026-08-12-thingbuf.md`), closing what was
+the most conspicuous gap in the roster: the design document rejects Vyukov packed
+stamps partly on thingbuf's bug history (§9) while never measuring the crate. It
+sits at 0.26x crossbeam by value and 0.32x by reference, and its blocking path
+is 1.68x this crate's `Park`.
 
-When it is added, note that its natural API is `push_ref`/`pop_ref` returning a
-`Ref<T>` for in-place slot reuse — the same ownership model as `disruptor`, where
-the queue never moves a `T`. That does strictly less work per element than a
-move-in `send(v)`, so it needs the same caveat the `disruptor` cells carry, and
-both its by-value and by-reference APIs should be measured separately if both
-exist.
+**The largest remaining gap is a payload, not a crate.** Every cell in
+`benches/throughput.rs` carries a `u64`. thingbuf's whole purpose is recycling
+heap-owning payloads in place, and `disruptor` likewise never moves a `T`, so
+both are currently measured with their machinery and none of their benefit. A
+`String` or `Vec<u8>` cell would be the single most informative addition to the
+roster — it is the configuration where three of the competitors are designed to
+win and none of them has been given the chance.
 
 **`heapless::spsc::Queue` — not queued.** A second no-alloc SPSC comparator
 beside rtrb, and cited in §10 for the division-regression class (issue #650) that
