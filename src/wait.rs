@@ -20,6 +20,22 @@
 //! Note that `Backoff` is a tenth of a core, not zero — earlier revisions of
 //! this doc called both it and `Park` "no idle CPU", which overstated `Backoff`
 //! by that tenth.
+//!
+//! Idle CPU is not the whole trade, and reading only the table above gets
+//! `BackoffYield` exactly backwards. Under **oversubscription** the ranking
+//! inverts — blocking `send`/`recv`, 4 cores, median of 3 (same example):
+//!
+//! | strategy | p2 | p8 (2x) | p32 (8x) |
+//! |---|---:|---:|---:|
+//! | `BusySpin` | 69.11 | 35.67 | 4.84 |
+//! | `BackoffYield` | 71.45 | **62.77** | **35.65** |
+//! | `Backoff` | 58.72 | 61.17 | 36.64 |
+//! | `Park` | 10.92 | 11.13 | 11.76 |
+//!
+//! Melem/s. `BusySpin` collapses once threads outnumber cores, because a
+//! spinner burns the core the thread it is waiting on needs; it also becomes
+//! wildly unstable there (4.71–19.93 across three runs at p32). `Park` is the
+//! slowest everywhere and the only strategy indifferent to the ratio.
 
 use std::time::Duration;
 

@@ -63,6 +63,14 @@ Under saturation nothing ever parks, so parking machinery is all cost; when idle
 it is 57x cheaper per element. Neither number alone is the answer, and a
 throughput table showing only the first is not wrong so much as half-reported.
 
+**The thread-to-core ratio is a third axis, and it reorders the strategies.**
+Every criterion cell in this repo runs at most three threads on four cores. Past
+that ratio `BusySpin` collapses — 69.11 Melem/s at 2 producers, 4.84 at 32 —
+while `BackoffYield` holds 35.65 and costs less CPU per element doing it. A
+strategy comparison drawn at or below core count does not transfer above it,
+which is how this directory briefly concluded that `BackoffYield` had no
+purpose.
+
 ## 3. Three rounds is a screen, not a decision
 
 Twice in one session a three-round result reversed under five rounds:
