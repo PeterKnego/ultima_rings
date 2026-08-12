@@ -29,6 +29,7 @@
 //!
 //! Run with: `cargo run --release --example cpu_cost`
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Instant;
@@ -52,6 +53,10 @@ const PACED_ELEMS: u64 = 5_000;
 /// Oversubscription section. 4 cores, so p8 is 2x oversubscribed and p32 is 8x.
 const OVER_BATCH: u64 = 200_000;
 const OVER_ITERS: u64 = 3;
+
+/// External-load section: CPU-bound threads that are not part of the channel,
+/// which is the ordinary case — a service whose pool is already busy.
+const EXT_THREADS: usize = 4;
 
 /// Nanoseconds this thread has spent on CPU, from `/proc/thread-self/schedstat`.
 ///
@@ -233,6 +238,39 @@ fn report_paced(name: &str, runs: &mut [Paced]) {
         m.cores() * 100.0,
         m.cpu_ns_per_elem(),
     );
+}
+
+/// CPU-bound work that has nothing to do with the channel. Returns iterations
+/// completed. Deliberately register-bound rather than memory-bound, so it
+/// competes for CPU without also competing for cache lines — the question here
+/// is scheduling, not coherence traffic.
+fn spawn_external(n: usize) -> (Arc<AtomicBool>, Vec<thread::JoinHandle<u64>>) {
+    let stop = Arc::new(AtomicBool::new(false));
+    let handles = (0..n)
+        .map(|i| {
+            let stop = Arc::clone(&stop);
+            thread::spawn(move || {
+                let mut x = 0x9e3779b97f4a7c15u64 ^ i as u64;
+                let mut ops = 0u64;
+                // The stop flag is checked once per 1024 iterations so the
+                // atomic load does not dominate the work being counted.
+                while !stop.load(Ordering::Relaxed) {
+                    for _ in 0..1024 {
+                        x = x.wrapping_mul(6364136223846793005).wrapping_add(1);
+                    }
+                    std::hint::black_box(x);
+                    ops += 1024;
+                }
+                ops
+            })
+        })
+        .collect();
+    (stop, handles)
+}
+
+fn stop_external(stop: Arc<AtomicBool>, handles: Vec<thread::JoinHandle<u64>>) -> u64 {
+    stop.store(true, Ordering::Relaxed);
+    handles.into_iter().map(|h| h.join().unwrap()).sum()
 }
 
 fn report(name: &str, runs: &mut [Run]) {
@@ -511,4 +549,77 @@ fn main() {
         }
         println!();
     }
+
+    // -----------------------------------------------------------------------
+    // External load. The section above oversubscribes with the channel's own
+    // producers, which is the easy case to construct and the rarer one to meet.
+    // The ordinary case is a channel inside a process that is already busy with
+    // work of its own, and it asks a question none of the tables above can:
+    // what does the wait strategy cost *everyone else*?
+    //
+    // Channel topology is fixed at 2 producers + 1 consumer — three threads,
+    // which fits this box — and the oversubscription comes entirely from
+    // EXT_THREADS CPU-bound threads that never touch the channel. Under CFS
+    // every thread gets its fair share whether it spins or sleeps, so the
+    // measurable difference is whether a waiting thread *uses* its share or
+    // hands it back.
+    // -----------------------------------------------------------------------
+    let (stop, hs) = spawn_external(EXT_THREADS);
+    let t = Instant::now();
+    thread::sleep(std::time::Duration::from_secs(1));
+    let base_wall = t.elapsed();
+    let base_ops = stop_external(stop, hs);
+    let baseline = base_ops as f64 / base_wall.as_secs_f64();
+
+    println!(
+        "\n\nExternal load: 2 producers + 1 consumer, plus {EXT_THREADS} \
+         CPU-bound threads outside the channel.\n7 threads on 4 cores. Baseline \
+         is those {EXT_THREADS} threads alone: {:.0} Mops/s.\n",
+        baseline / 1e6
+    );
+    println!(
+        "{:<16} {:>9} {:>12} {:>12} {:>12}",
+        "strategy", "Melem/s", "ext Mops/s", "ext kept", "cpu ns/elem"
+    );
+    println!("{}", "-".repeat(65));
+
+    for (name, strat) in [
+        ("BusySpin", WaitStrategy::BusySpin),
+        ("BackoffYield", WaitStrategy::BackoffYield),
+        ("Backoff", WaitStrategy::Backoff),
+        ("Park", WaitStrategy::Park),
+    ] {
+        let mut rows: Vec<(f64, f64, f64)> = (0..ROUNDS)
+            .map(|_| {
+                let (stop, hs) = spawn_external(EXT_THREADS);
+                let run = measure_with(
+                    2,
+                    OVER_BATCH,
+                    OVER_ITERS,
+                    || mpsc::channel::<u64>(CAP, strat),
+                    |tx: &mut mpsc::Sender<u64>, v| tx.send(v).is_ok(),
+                    |rx: &mut mpsc::Receiver<u64>| rx.recv().is_ok(),
+                );
+                let ops = stop_external(stop, hs);
+                let ext = ops as f64 / (run.wall_ns as f64 / 1e9);
+                (run.melem_per_s(), ext, run.cpu_ns_per_elem())
+            })
+            .collect();
+        rows.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        let m = rows[rows.len() / 2];
+        println!(
+            "{:<16} {:>9.2} {:>12.0} {:>11.0}% {:>12.1}",
+            name,
+            m.0,
+            m.1 / 1e6,
+            m.1 / baseline * 100.0,
+            m.2,
+        );
+    }
+
+    println!(
+        "\next kept = external throughput as a fraction of those threads \
+         running alone.\n           Below 100% is the channel taking cores from \
+         the rest of the process."
+    );
 }

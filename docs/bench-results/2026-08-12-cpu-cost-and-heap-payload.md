@@ -176,6 +176,71 @@ no advantage and was dominated by `BusySpin`. That was drawn from the paced
 table alone, which measures the single regime where the strategy cannot work.
 The advantage is real and up to 7.37x.
 
+## Oversubscribing with threads outside the channel gives a different answer
+
+The sweep above oversubscribes with the channel's own producers. That is the
+easy case to construct and the rarer one to meet. The ordinary case is a channel
+inside a process that is already busy, so: channel topology fixed at 2 producers
++ 1 consumer, plus **4 CPU-bound threads that never touch the channel**. Seven
+threads on four cores. Six samples.
+
+The new column is what nothing here had measured — what the wait strategy costs
+*everyone else*. `ext kept` is the external threads' throughput as a fraction of
+those same threads running alone.
+
+| strategy | Melem/s | range | ext kept | range | cpu ns/elem |
+|---|---:|---|---:|---|---:|
+| `Park` | **4.55** | 3.91–5.24 | 86% | 84–93 | 104.5 |
+| `BackoffYield` | 2.79 | 1.38–8.09 | 96% | 72–104 | 21.4 |
+| `BusySpin` | 1.79 | 1.33–14.02 | **77%** | 75–83 | 508.9 |
+| `Backoff` | 1.73 | 1.06–3.03 | **98%** | 95–103 | 22.7 |
+
+### `BusySpin` costs the rest of the process 23% of its throughput
+
+77% kept, range 75–83%, separated from `Backoff`'s 95–103% across all six
+samples. This is the cost that every table before this one was blind to: a
+spinning consumer does not merely fail to help, it takes roughly a quarter of
+the machine's useful work away from the code around it. `Backoff` costs 2%,
+`Park` 14%.
+
+`Park`'s 14% is worth noting as the price of its wake protocol — the per-publish
+fence and futex traffic is real CPU, and it comes out of the neighbours.
+
+### The ranking inverts against the producer-oversubscription sweep
+
+| | oversubscribed by producers (p32) | oversubscribed by strangers |
+|---|---|---|
+| best throughput | `BackoffYield` / `Backoff` | `Park` |
+| worst throughput | `BusySpin` (7.4x behind) | `BusySpin` / `Backoff` |
+
+**The two kinds of oversubscription are not interchangeable, and the mechanism
+is why.** Yielding pays when the thread you would yield to is the one you are
+waiting on — you hand over the core, it publishes, you get woken by the work you
+wanted. Yielding to a stranger returns nothing: you surrender your slice and the
+recipient will never publish anything. `Park` wins here precisely because it
+leaves the runqueue altogether and is woken when there is genuinely work, rather
+than competing for slices it cannot use.
+
+That also explains why `BusySpin`, `BackoffYield` and `Backoff` land within noise
+of each other on channel throughput in this table while separating cleanly in the
+previous one.
+
+### `Park` is the stable choice under external load
+
+Its range is 3.91–5.24, a 1.34x spread, against `BusySpin`'s 1.33–14.02 at 10.5x.
+Excluding a single sample in which the box was evidently disturbed — `BusySpin`
+reported 14.02 Melem/s there, 4x anything else it produced, and `BackoffYield`
+simultaneously dropped to its 72% outlier — `Park` separates from `BusySpin`
+outright. With that sample included it does not, so the throughput claim is
+stated as stability rather than as a win.
+
+### Everything gets much slower
+
+The channel runs at 1.7–4.6 Melem/s here against roughly 70 Melem/s at p2 on an
+idle box — a **15–40x** collapse from adding four unrelated CPU-bound threads to
+a four-core machine. Any latency or throughput budget derived from the idle
+tables in this directory does not survive contact with a busy process.
+
 ---
 
 # Part 3: a payload that owns memory
