@@ -109,6 +109,13 @@ differ by 57x in idle CPU cost.
 
 # Part 2: oversubscription, and what `BackoffYield` is actually for
 
+> **Re-measured across 2–16 physical cores the same day**
+> (`2026-08-12-topology-sweep.md`). Everything below reproduces at the topology
+> it was taken on, and the host it was taken on is **2 physical cores with SMT**,
+> not 4 cores. Two corrections follow from that: the collapse threshold is
+> schedulable CPUs rather than cores, and the 7.37x below is 1.23x on a 16-core
+> machine. The direction holds everywhere; the magnitude does not travel.
+
 Part 1 runs at most three threads on four cores, in both its sections. That is
 the one regime in which `BackoffYield` is definitionally inert: `yield_now`
 returns immediately unless another thread is runnable, so with nothing else
@@ -177,6 +184,11 @@ table alone, which measures the single regime where the strategy cannot work.
 The advantage is real and up to 7.37x.
 
 ## Oversubscribing with threads outside the channel gives a different answer
+
+> **Understated, not wrong.** On real cores `Park`'s lead here is 5.0x to 24x
+> rather than the 2.5x measured below, and it holds at every topology tested
+> (`2026-08-12-topology-sweep.md`). The hedge below — "stability rather than a
+> win" — was right for this data and too cautious for the effect.
 
 The sweep above oversubscribes with the channel's own producers. That is the
 easy case to construct and the rarer one to meet. The ordinary case is a channel

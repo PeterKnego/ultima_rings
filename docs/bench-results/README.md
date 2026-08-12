@@ -1,8 +1,15 @@
 # Reading the benchmark results in this directory
 
-Every file here records a measurement taken on one 4-core Linux VM. Three
+Most files here record measurements taken on one small Linux VM that reports 4
+CPUs and has **2 physical cores** with SMT. Files dated 2026-08-12 and later may
+instead come from the 16-core rig in `bench-infra/`; each states its host. Four
 things, all discovered the hard way, determine how much any number in this
 directory can carry.
+
+**Before quoting any wait-strategy number, check the core count it was taken on**
+(`2026-08-12-topology-sweep.md`). `BackoffYield`'s lead over `BusySpin` under
+oversubscription is 12.3x on 2 cores and 1.2x on 16 — the same effect, measured
+either side of an 8x topology change.
 
 ## 1. Each cell has its own resolution budget, measured
 
@@ -71,6 +78,12 @@ strategy comparison drawn at or below core count does not transfer above it,
 which is how this directory briefly concluded that `BackoffYield` had no
 purpose.
 
+**Core count changes the magnitude of every strategy result, sometimes by 10x.**
+A comparison taken on 2 cores is a statement about 2 cores. The sweep in
+`2026-08-12-topology-sweep.md` is the reference; the rig that produced it is
+`bench-infra/`, which pins one binary on one host with `taskset` so only the
+visible CPU count varies.
+
 **And *what* the extra threads are doing reorders them again.** Oversubscribing
 with the channel's own producers favours yielding; oversubscribing with threads
 that never touch the channel favours parking, because yielding to a stranger
@@ -78,10 +91,10 @@ surrenders a slice and gets nothing back. `Park` goes from worst in every idle
 table to best and most stable under external load.
 
 **A wait strategy has a cost that lands outside the benchmark.** Measured as the
-external threads' throughput relative to running alone: `Backoff` 98%,
-`BackoffYield` 96%, `Park` 86%, `BusySpin` **77%**. Nothing in a throughput
-table can see a quarter of the machine's useful work being taken from the rest
-of the process.
+external threads' throughput relative to running alone, `BusySpin` keeps 50% on
+2 cores, 77% on 4 and 94% on 16, while `Backoff` and `BackoffYield` stay between
+96% and 100% at every size. Nothing in a throughput table can see the rest of
+the process losing half its work.
 
 ## 3. Three rounds is a screen, not a decision
 
