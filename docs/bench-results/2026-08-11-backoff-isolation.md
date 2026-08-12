@@ -91,6 +91,13 @@ That change lives in the Dekker wake protocol, which is loom-verified
 corners of this 2x2**, which is precisely what the backoff's original gate
 failed to do.
 
+**Follow-up (2026-08-12): the spin was implemented and did not pass.** Two of its
+three `park_block` runs fall inside the unmodified baseline's range, which was
+subsequently characterised over ten runs as 10.00–12.26
+(`2026-08-12-layout-sensitivity.md`). `park_block` turns out to be the noisiest
+cell in the suite, with a ~11% minimum detectable effect. The branch
+`feat/park-prespin` stays unmerged.
+
 ## Not covered
 
 - **`Backoff` and `BackoffYield`** have no cell here. `Backoff` parks, so it may
