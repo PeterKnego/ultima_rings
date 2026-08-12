@@ -1,8 +1,8 @@
 # Reading the benchmark results in this directory
 
-Every file here records a measurement taken on one 4-core Linux VM. Two
-properties of that box, both discovered the hard way, determine how much any
-number in this directory can carry.
+Every file here records a measurement taken on one 4-core Linux VM. Three
+things, all discovered the hard way, determine how much any number in this
+directory can carry.
 
 ## 1. Each cell has its own resolution budget, measured
 
@@ -47,7 +47,23 @@ well-behaved cells, not 10%.
 for instance, since `src/spsc.rs` is untouched by MPSC work. Not merely a cell
 whose branch is not taken.
 
-## 2. Three rounds is a screen, not a decision
+## 2. Wall-clock throughput hides what the spinning costs
+
+A spinning ring converts idle cores into throughput, and elements-per-second does
+not show the cores it spent. On this 4-core box that flatters every `BusySpin`
+cell against every parking competitor. `examples/cpu_cost.rs` measures the other
+half via `/proc/thread-self/schedstat`, and the two halves point opposite ways:
+
+| | saturated (cpu ns/elem) | idle, 1 elem per 200 µs (% of a core) |
+|---|---:|---:|
+| `BusySpin` | 32.4 — cheapest in the roster | 99.9% |
+| `Park` | 221.1 — most expensive | 1.8% |
+
+Under saturation nothing ever parks, so parking machinery is all cost; when idle,
+it is 57x cheaper per element. Neither number alone is the answer, and a
+throughput table showing only the first is not wrong so much as half-reported.
+
+## 3. Three rounds is a screen, not a decision
 
 Twice in one session a three-round result reversed under five rounds:
 
@@ -75,6 +91,11 @@ above, or a five-round confirmation.
   three configurations that varied capacity and producer count while holding the
   wait strategy fixed. It was thorough on the wrong axis and missed a 24%
   regression in `Park` mode (`2026-08-11-bakeoff-v3.md`).
+- **Report CPU alongside wall time** whenever a spinning config is compared to a
+  parking one. `examples/cpu_cost.rs` does this; the criterion groups do not.
+- **Vary the payload, not just the crate.** Switching `u64` to a 64-byte
+  `String` moved competitors by between 1.6x and 15.8x and reversed one ranking
+  outright. A roster measured at one payload is a roster measured at one point.
 - **Watch for byte-identical repeat numbers.** They mean a filter matched
   nothing and criterion re-reported a stale `estimates.json`, usually after a
   `git stash` took the bench code along with the source.
@@ -90,13 +111,13 @@ stamps partly on thingbuf's bug history (§9) while never measuring the crate. I
 sits at 0.26x crossbeam by value and 0.32x by reference, and its blocking path
 is 1.68x this crate's `Park`.
 
-**The largest remaining gap is a payload, not a crate.** Every cell in
-`benches/throughput.rs` carries a `u64`. thingbuf's whole purpose is recycling
-heap-owning payloads in place, and `disruptor` likewise never moves a `T`, so
-both are currently measured with their machinery and none of their benefit. A
-`String` or `Vec<u8>` cell would be the single most informative addition to the
-roster — it is the configuration where three of the competitors are designed to
-win and none of them has been given the chance.
+**A `String` cell was added the same day** (`bakeoff_mpsc_string`,
+`2026-08-12-cpu-cost-and-heap-payload.md`) and it reversed that result: on a
+heap-owning payload thingbuf's reference API is 1.82x this crate. Quote the two
+together or neither.
+
+`disruptor` still has no `String` cell. It shares thingbuf's in-place model, so
+it is the remaining crate measured only where its design cannot show.
 
 **`heapless::spsc::Queue` — not queued.** A second no-alloc SPSC comparator
 beside rtrb, and cited in §10 for the division-regression class (issue #650) that
