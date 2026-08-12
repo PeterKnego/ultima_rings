@@ -3,21 +3,36 @@
 //! layer (`crate::notify`) and needs the Dekker wake protocol.
 //!
 //! Ordered by wake granularity, measured on a 4-core Linux VM:
-//! `BusySpin` (~27 ns, holds a core) → `BackoffYield` (~0.7 µs, still holds a
-//! core but yields it on demand) → `Park` (~10 µs, no idle CPU, costs the
-//! peer a fence + wake) → `Backoff` (~64 µs floor, no idle CPU, costs the peer
-//! nothing).
+//! `BusySpin` (~27 ns) → `BackoffYield` (~0.7 µs) → `Park` (~10 µs, costs the
+//! peer a fence + wake) → `Backoff` (~64 µs floor, costs the peer nothing).
+//!
+//! Idle CPU is the other half of that trade, and it is measured rather than
+//! asserted — `examples/cpu_cost.rs`, consumer thread only, one element every
+//! 200 µs, as a fraction of one core:
+//!
+//! | strategy | idle CPU |
+//! |---|---:|
+//! | `BackoffYield` | 100.0% |
+//! | `BusySpin` | 99.9% |
+//! | `Backoff` | 10.2% |
+//! | `Park` | 1.8% |
+//!
+//! Note that `Backoff` is a tenth of a core, not zero — earlier revisions of
+//! this doc called both it and `Park` "no idle CPU", which overstated `Backoff`
+//! by that tenth.
 
 use std::time::Duration;
 
 /// How a blocked side (consumer-on-empty, producer-on-full) waits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WaitStrategy {
-    /// `spin_loop()` until progress: lowest latency, one core per blocked side.
+    /// `spin_loop()` until progress: lowest latency, one core per blocked side
+    /// — measured at 99.9% of a core while idle (`examples/cpu_cost.rs`).
     BusySpin,
     /// Aeron-style idle ladder: spins, then yields, then timed parks doubling
     /// 64 µs → 1 ms. Self-waking — the other side never needs to notify.
-    /// Lowest CPU of the self-waking strategies, at the cost of a wake latency
+    /// Lowest CPU of the self-waking strategies at 10.2% of a core when idle
+    /// (`examples/cpu_cost.rs`), at the cost of a wake latency
     /// floored by the OS timer: the 64 µs floor is deliberate, because
     /// `thread::park_timeout` cannot deliver sub-floor sleeps (a 1 µs request
     /// measured ~60 µs on a 4-core Linux VM).
@@ -28,15 +43,16 @@ pub enum WaitStrategy {
     /// rather than the OS timer floor (~60 µs), while still surrendering the
     /// core whenever another thread is runnable.
     ///
-    /// **This does not reduce CPU use on an idle machine.** With nothing else
-    /// runnable, `yield_now` returns immediately and this burns a core just
-    /// like [`WaitStrategy::BusySpin`] — only less efficiently per iteration
+    /// **This does not reduce CPU use on an idle machine.** Measured at 100.0%
+    /// of a core while idle, against `BusySpin`'s 99.9% (`examples/cpu_cost.rs`)
+    /// — with nothing else runnable, `yield_now` returns immediately and this
+    /// burns a core just like [`WaitStrategy::BusySpin`] — only less efficiently per iteration
     /// (~0.7 µs vs ~27 ns). It buys *politeness under contention*, not idle
     /// CPU. Callers wanting low CPU want [`WaitStrategy::Backoff`] or
     /// [`WaitStrategy::Park`].
     BackoffYield,
-    /// Fully blocking park/wake via the notify layer: zero idle CPU,
-    /// ~10 µs median wake latency. Unlike the self-waking strategies, this
+    /// Fully blocking park/wake via the notify layer: 1.8% of a core when
+    /// idle, ~10 µs median wake latency. Unlike the self-waking strategies, this
     /// makes the *productive* side pay a `SeqCst` fence plus a wake on every
     /// operation.
     ///

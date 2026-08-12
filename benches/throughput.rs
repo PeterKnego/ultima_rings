@@ -1017,6 +1017,260 @@ fn bakeoff_disruptor_mpsc(c: &mut Criterion) {
 // pays the per-publish wake cost without either side ever parking.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Heap-owning payload. Every other cell in this file carries a `u64`, which is
+// the payload where `thingbuf` and `disruptor` are measured with all of their
+// machinery and none of their benefit: both exist so that a slot's existing
+// value can be mutated in place instead of reallocated, and a u64 owns nothing
+// to reallocate.
+//
+// This group is the same harness with a `String` payload. Producers build a
+// message per element, which is what a logging or serialization pipeline
+// actually does, so the move-based crates pay one allocation and one free per
+// element and the slot-owning crates pay neither after warm-up. That difference
+// is the architectural claim under test, not an unfairness in the harness.
+//
+// It is also the first cell in this file to exercise this crate's drop
+// bookkeeping at all — a `u64` has no destructor, so every prior number was
+// measured on a path where `Slot::drop` does nothing.
+//
+// Read `thingbuf_ref` as the crate's designed configuration and `thingbuf` as
+// what a caller gets by reaching for the API that looks like every other
+// channel. Per its own docs, mixing by-value with by-reference silently
+// discards the pooled allocation, so the by-value cell frees and reallocates
+// exactly like the move-based crates.
+// ---------------------------------------------------------------------------
+
+/// 64 bytes: a plausible log line, and large enough that the allocation is not
+/// lost in the noise of the handoff.
+const MSG: &str = "2026-08-12T00:00:00Z INFO request completed status=200 in 4ms";
+const STR_BATCH: u64 = 200_000;
+
+fn bakeoff_mpsc_string(c: &mut Criterion) {
+    let mut g = c.benchmark_group("bakeoff_mpsc_string");
+    g.throughput(Throughput::Elements(STR_BATCH));
+
+    g.bench_function("ultima", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (tx, mut rx) = mpsc::channel::<String>(1024, WaitStrategy::BusySpin);
+                let barrier = Arc::new(Barrier::new(3));
+                let mut handles = Vec::new();
+                for _ in 0..2 {
+                    let mut tx = tx.clone();
+                    let barrier = Arc::clone(&barrier);
+                    handles.push(thread::spawn(move || {
+                        barrier.wait();
+                        for _ in 0..STR_BATCH / 2 {
+                            let mut v = String::from(MSG);
+                            loop {
+                                match tx.try_send(v) {
+                                    Ok(()) => break,
+                                    Err(TrySendError::Full(b)) => {
+                                        v = b;
+                                        std::hint::spin_loop();
+                                    }
+                                    Err(TrySendError::Disconnected(_)) => return,
+                                }
+                            }
+                        }
+                    }));
+                }
+                drop(tx);
+                barrier.wait();
+                let t = Instant::now();
+                let mut got = 0u64;
+                loop {
+                    match rx.try_recv() {
+                        Ok(v) => {
+                            drop(v);
+                            got += 1;
+                            if got == STR_BATCH {
+                                break;
+                            }
+                        }
+                        Err(TryRecvError::Empty) => std::hint::spin_loop(),
+                        Err(TryRecvError::Disconnected) => break,
+                    }
+                }
+                total += t.elapsed();
+                for h in handles {
+                    h.join().unwrap();
+                }
+            }
+            total
+        })
+    });
+
+    g.bench_function("crossbeam", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (tx, rx) = crossbeam_channel::bounded::<String>(1024);
+                let barrier = Arc::new(Barrier::new(3));
+                let mut handles = Vec::new();
+                for _ in 0..2 {
+                    let tx = tx.clone();
+                    let barrier = Arc::clone(&barrier);
+                    handles.push(thread::spawn(move || {
+                        barrier.wait();
+                        for _ in 0..STR_BATCH / 2 {
+                            let mut v = String::from(MSG);
+                            loop {
+                                match tx.try_send(v) {
+                                    Ok(()) => break,
+                                    Err(crossbeam_channel::TrySendError::Full(b)) => {
+                                        v = b;
+                                        std::hint::spin_loop();
+                                    }
+                                    Err(crossbeam_channel::TrySendError::Disconnected(_)) => return,
+                                }
+                            }
+                        }
+                    }));
+                }
+                drop(tx);
+                barrier.wait();
+                let t = Instant::now();
+                let mut got = 0u64;
+                loop {
+                    match rx.try_recv() {
+                        Ok(v) => {
+                            drop(v);
+                            got += 1;
+                            if got == STR_BATCH {
+                                break;
+                            }
+                        }
+                        Err(crossbeam_channel::TryRecvError::Empty) => std::hint::spin_loop(),
+                        Err(crossbeam_channel::TryRecvError::Disconnected) => break,
+                    }
+                }
+                total += t.elapsed();
+                for h in handles {
+                    h.join().unwrap();
+                }
+            }
+            total
+        })
+    });
+
+    g.bench_function("thingbuf", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (tx, rx) = thingbuf::mpsc::blocking::channel::<String>(1024);
+                let barrier = Arc::new(Barrier::new(3));
+                let mut handles = Vec::new();
+                for _ in 0..2 {
+                    let tx = tx.clone();
+                    let barrier = Arc::clone(&barrier);
+                    handles.push(thread::spawn(move || {
+                        barrier.wait();
+                        for _ in 0..STR_BATCH / 2 {
+                            let mut v = String::from(MSG);
+                            loop {
+                                match tx.try_send(v) {
+                                    Ok(()) => break,
+                                    Err(thingbuf::mpsc::errors::TrySendError::Full(b)) => {
+                                        v = b;
+                                        std::hint::spin_loop();
+                                    }
+                                    Err(_) => return,
+                                }
+                            }
+                        }
+                    }));
+                }
+                drop(tx);
+                barrier.wait();
+                let t = Instant::now();
+                let mut got = 0u64;
+                loop {
+                    match rx.try_recv() {
+                        Ok(v) => {
+                            drop(v);
+                            got += 1;
+                            if got == STR_BATCH {
+                                break;
+                            }
+                        }
+                        Err(thingbuf::mpsc::errors::TryRecvError::Empty) => std::hint::spin_loop(),
+                        Err(_) => break,
+                    }
+                }
+                total += t.elapsed();
+                for h in handles {
+                    h.join().unwrap();
+                }
+            }
+            total
+        })
+    });
+
+    // The designed configuration: the producer overwrites the slot's existing
+    // String in place, so after the first lap the buffer's capacity is reused
+    // and the allocator is never touched.
+    g.bench_function("thingbuf_ref", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (tx, rx) = thingbuf::mpsc::blocking::channel::<String>(1024);
+                let barrier = Arc::new(Barrier::new(3));
+                let mut handles = Vec::new();
+                for _ in 0..2 {
+                    let tx = tx.clone();
+                    let barrier = Arc::clone(&barrier);
+                    handles.push(thread::spawn(move || {
+                        barrier.wait();
+                        for _ in 0..STR_BATCH / 2 {
+                            loop {
+                                match tx.try_send_ref() {
+                                    Ok(mut slot) => {
+                                        slot.clear();
+                                        slot.push_str(MSG);
+                                        break;
+                                    }
+                                    Err(thingbuf::mpsc::errors::TrySendError::Full(())) => {
+                                        std::hint::spin_loop();
+                                    }
+                                    Err(_) => return,
+                                }
+                            }
+                        }
+                    }));
+                }
+                drop(tx);
+                barrier.wait();
+                let t = Instant::now();
+                let mut got = 0u64;
+                loop {
+                    match rx.try_recv_ref() {
+                        Ok(slot) => {
+                            std::hint::black_box(slot.len());
+                            drop(slot);
+                            got += 1;
+                            if got == STR_BATCH {
+                                break;
+                            }
+                        }
+                        Err(thingbuf::mpsc::errors::TryRecvError::Empty) => std::hint::spin_loop(),
+                        Err(_) => break,
+                    }
+                }
+                total += t.elapsed();
+                for h in handles {
+                    h.join().unwrap();
+                }
+            }
+            total
+        })
+    });
+
+    g.finish();
+}
+
 fn backoff_isolation(c: &mut Criterion) {
     let mut g = c.benchmark_group("backoff_isolation");
     g.throughput(Throughput::Elements(BATCH));
@@ -1211,6 +1465,7 @@ criterion_group!(
     bakeoff,
     bakeoff_spsc,
     bakeoff_mpsc,
+    bakeoff_mpsc_string,
     bakeoff_park_mpsc,
     bakeoff_disruptor_mpsc,
     mpsc_layout_probe,
