@@ -172,8 +172,15 @@ Three interleaved rounds of `bakeoff_mpsc`, `bakeoff_mpsc_string` and
 | flume | 2.20 | 3.70 | 0.28x |
 | kanal | 0.33 | 0.46 | 0.03x |
 
-**This crate's lead over crossbeam grows with the machine: 1.24x on the original
-VM, 1.59x at 16 cores.** The headline claim survives the move and improves.
+**This crate leads crossbeam at every topology with enough CPUs**, by 1.08x to
+1.61x. The headline claim survives the move.
+
+> **The apparent trend does not.** An earlier revision of this line read "the
+> lead grows with the machine: 1.24x → 1.59x". Those differ by 28%, which is
+> inside crossbeam's 22% minimum detectable effect on this rig
+> (`2026-08-12-resolution-budgets-rig.md`). The direction is well clear of the
+> budget because `ultima`'s own cell is tight at 2–3%; the trend is not
+> established.
 
 kanal is not merely noisy as the earlier documents concluded — it is 0.03x
 crossbeam here, consistently, at both topologies. Its 50% spread on the old box

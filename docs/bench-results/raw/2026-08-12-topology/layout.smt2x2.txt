@@ -1,0 +1,345 @@
+### round=1 align=0 point=smt2x2
+spsc/busy_spin_pipelined
+                        thrpt:  [107.66 Melem/s 107.76 Melem/s 107.85 Melem/s]
+bakeoff_mpsc/ultima     time:   [3.0234 ms 3.0335 ms 3.0440 ms]
+                        thrpt:  [32.851 Melem/s 32.965 Melem/s 33.075 Melem/s]
+bakeoff_mpsc/crossbeam  time:   [3.9045 ms 4.0166 ms 4.1218 ms]
+                        thrpt:  [24.261 Melem/s 24.897 Melem/s 25.611 Melem/s]
+bakeoff_mpsc/flume      time:   [18.802 ms 18.995 ms 19.196 ms]
+                        thrpt:  [5.2094 Melem/s 5.2645 Melem/s 5.3187 Melem/s]
+bakeoff_mpsc/kanal      time:   [100.51 ms 103.46 ms 106.37 ms]
+                        thrpt:  [940.08 Kelem/s 966.51 Kelem/s 994.92 Kelem/s]
+bakeoff_mpsc/thingbuf   time:   [23.545 ms 23.614 ms 23.681 ms]
+                        thrpt:  [4.2229 Melem/s 4.2348 Melem/s 4.2471 Melem/s]
+bakeoff_mpsc/thingbuf_ref
+                        thrpt:  [4.2074 Melem/s 4.2126 Melem/s 4.2177 Melem/s]
+backoff_isolation/busyspin_poll
+                        thrpt:  [32.807 Melem/s 32.917 Melem/s 33.026 Melem/s]
+backoff_isolation/busyspin_block
+                        thrpt:  [31.126 Melem/s 31.220 Melem/s 31.310 Melem/s]
+backoff_isolation/park_poll
+                        thrpt:  [7.6574 Melem/s 7.7115 Melem/s 7.7604 Melem/s]
+backoff_isolation/park_block
+                        thrpt:  [6.3374 Melem/s 6.4346 Melem/s 6.5418 Melem/s]
+### round=1 align=3 point=smt2x2
+spsc/busy_spin_pipelined
+                        thrpt:  [105.80 Melem/s 105.89 Melem/s 105.97 Melem/s]
+bakeoff_mpsc/ultima     time:   [3.0046 ms 3.0141 ms 3.0240 ms]
+                        thrpt:  [33.069 Melem/s 33.177 Melem/s 33.282 Melem/s]
+bakeoff_mpsc/crossbeam  time:   [2.3505 ms 2.4119 ms 2.4740 ms]
+                        thrpt:  [40.420 Melem/s 41.462 Melem/s 42.543 Melem/s]
+bakeoff_mpsc/flume      time:   [18.756 ms 18.870 ms 18.989 ms]
+                        thrpt:  [5.2662 Melem/s 5.2995 Melem/s 5.3316 Melem/s]
+bakeoff_mpsc/kanal      time:   [112.99 ms 113.70 ms 114.41 ms]
+                        thrpt:  [874.06 Kelem/s 879.47 Kelem/s 885.01 Kelem/s]
+bakeoff_mpsc/thingbuf   time:   [19.039 ms 19.057 ms 19.073 ms]
+                        thrpt:  [5.2429 Melem/s 5.2475 Melem/s 5.2524 Melem/s]
+bakeoff_mpsc/thingbuf_ref
+                        thrpt:  [4.1152 Melem/s 4.1224 Melem/s 4.1298 Melem/s]
+backoff_isolation/busyspin_poll
+                        thrpt:  [33.885 Melem/s 33.976 Melem/s 34.059 Melem/s]
+backoff_isolation/busyspin_block
+                        thrpt:  [32.488 Melem/s 32.550 Melem/s 32.607 Melem/s]
+backoff_isolation/park_poll
+                        thrpt:  [11.302 Melem/s 11.359 Melem/s 11.414 Melem/s]
+backoff_isolation/park_block
+                        thrpt:  [6.9228 Melem/s 7.0137 Melem/s 7.1053 Melem/s]
+### round=1 align=4 point=smt2x2
+spsc/busy_spin_pipelined
+                        thrpt:  [130.50 Melem/s 130.58 Melem/s 130.67 Melem/s]
+bakeoff_mpsc/ultima     time:   [2.9986 ms 3.0066 ms 3.0149 ms]
+                        thrpt:  [33.168 Melem/s 33.260 Melem/s 33.349 Melem/s]
+bakeoff_mpsc/crossbeam  time:   [2.4488 ms 2.5213 ms 2.5930 ms]
+                        thrpt:  [38.566 Melem/s 39.663 Melem/s 40.836 Melem/s]
+bakeoff_mpsc/flume      time:   [17.735 ms 17.881 ms 18.031 ms]
+                        thrpt:  [5.5460 Melem/s 5.5925 Melem/s 5.6384 Melem/s]
+bakeoff_mpsc/kanal      time:   [104.34 ms 105.06 ms 105.78 ms]
+                        thrpt:  [945.35 Kelem/s 951.88 Kelem/s 958.42 Kelem/s]
+bakeoff_mpsc/thingbuf   time:   [21.085 ms 21.151 ms 21.227 ms]
+                        thrpt:  [4.7109 Melem/s 4.7280 Melem/s 4.7427 Melem/s]
+bakeoff_mpsc/thingbuf_ref
+                        thrpt:  [4.3795 Melem/s 4.3830 Melem/s 4.3866 Melem/s]
+backoff_isolation/busyspin_poll
+                        thrpt:  [33.406 Melem/s 33.498 Melem/s 33.588 Melem/s]
+backoff_isolation/busyspin_block
+                        thrpt:  [32.178 Melem/s 32.228 Melem/s 32.272 Melem/s]
+backoff_isolation/park_poll
+                        thrpt:  [11.269 Melem/s 11.341 Melem/s 11.415 Melem/s]
+backoff_isolation/park_block
+                        thrpt:  [7.7403 Melem/s 7.9162 Melem/s 8.1005 Melem/s]
+### round=1 align=5 point=smt2x2
+spsc/busy_spin_pipelined
+                        thrpt:  [109.33 Melem/s 109.66 Melem/s 110.16 Melem/s]
+bakeoff_mpsc/ultima     time:   [3.0446 ms 3.0532 ms 3.0622 ms]
+                        thrpt:  [32.657 Melem/s 32.752 Melem/s 32.845 Melem/s]
+bakeoff_mpsc/crossbeam  time:   [3.2606 ms 3.3758 ms 3.4976 ms]
+                        thrpt:  [28.591 Melem/s 29.622 Melem/s 30.669 Melem/s]
+bakeoff_mpsc/flume      time:   [19.629 ms 19.806 ms 19.992 ms]
+                        thrpt:  [5.0019 Melem/s 5.0491 Melem/s 5.0946 Melem/s]
+bakeoff_mpsc/kanal      time:   [114.57 ms 115.22 ms 115.86 ms]
+                        thrpt:  [863.11 Kelem/s 867.90 Kelem/s 872.80 Kelem/s]
+bakeoff_mpsc/thingbuf   time:   [23.194 ms 23.270 ms 23.391 ms]
+                        thrpt:  [4.2751 Melem/s 4.2974 Melem/s 4.3114 Melem/s]
+bakeoff_mpsc/thingbuf_ref
+                        thrpt:  [4.6225 Melem/s 4.6332 Melem/s 4.6472 Melem/s]
+backoff_isolation/busyspin_poll
+                        thrpt:  [32.550 Melem/s 32.641 Melem/s 32.732 Melem/s]
+backoff_isolation/busyspin_block
+                        thrpt:  [31.102 Melem/s 31.187 Melem/s 31.271 Melem/s]
+backoff_isolation/park_poll
+                        thrpt:  [7.6612 Melem/s 7.6944 Melem/s 7.7212 Melem/s]
+backoff_isolation/park_block
+                        thrpt:  [6.5545 Melem/s 6.6411 Melem/s 6.7327 Melem/s]
+### round=1 align=6 point=smt2x2
+spsc/busy_spin_pipelined
+                        thrpt:  [103.99 Melem/s 104.06 Melem/s 104.13 Melem/s]
+bakeoff_mpsc/ultima     time:   [3.0172 ms 3.0251 ms 3.0330 ms]
+                        thrpt:  [32.971 Melem/s 33.057 Melem/s 33.143 Melem/s]
+bakeoff_mpsc/crossbeam  time:   [2.4615 ms 2.5268 ms 2.5913 ms]
+                        thrpt:  [38.590 Melem/s 39.576 Melem/s 40.626 Melem/s]
+bakeoff_mpsc/flume      time:   [16.812 ms 16.938 ms 17.071 ms]
+                        thrpt:  [5.8580 Melem/s 5.9038 Melem/s 5.9482 Melem/s]
+bakeoff_mpsc/kanal      time:   [121.12 ms 122.61 ms 123.97 ms]
+                        thrpt:  [806.66 Kelem/s 815.58 Kelem/s 825.65 Kelem/s]
+bakeoff_mpsc/thingbuf   time:   [18.517 ms 18.606 ms 18.665 ms]
+                        thrpt:  [5.3576 Melem/s 5.3745 Melem/s 5.4005 Melem/s]
+bakeoff_mpsc/thingbuf_ref
+                        thrpt:  [4.6889 Melem/s 4.6971 Melem/s 4.7050 Melem/s]
+backoff_isolation/busyspin_poll
+                        thrpt:  [32.778 Melem/s 32.874 Melem/s 32.968 Melem/s]
+backoff_isolation/busyspin_block
+                        thrpt:  [30.742 Melem/s 30.821 Melem/s 30.895 Melem/s]
+backoff_isolation/park_poll
+                        thrpt:  [7.5310 Melem/s 7.5738 Melem/s 7.6112 Melem/s]
+backoff_isolation/park_block
+                        thrpt:  [6.4698 Melem/s 6.5513 Melem/s 6.6355 Melem/s]
+### round=2 align=0 point=smt2x2
+spsc/busy_spin_pipelined
+                        thrpt:  [126.17 Melem/s 126.26 Melem/s 126.37 Melem/s]
+bakeoff_mpsc/ultima     time:   [2.9897 ms 2.9971 ms 3.0048 ms]
+                        thrpt:  [33.280 Melem/s 33.366 Melem/s 33.448 Melem/s]
+bakeoff_mpsc/crossbeam  time:   [2.7489 ms 2.8236 ms 2.8939 ms]
+                        thrpt:  [34.556 Melem/s 35.415 Melem/s 36.378 Melem/s]
+bakeoff_mpsc/flume      time:   [17.597 ms 17.783 ms 17.977 ms]
+                        thrpt:  [5.5628 Melem/s 5.6233 Melem/s 5.6829 Melem/s]
+bakeoff_mpsc/kanal      time:   [113.86 ms 114.55 ms 115.25 ms]
+                        thrpt:  [867.71 Kelem/s 872.95 Kelem/s 878.28 Kelem/s]
+bakeoff_mpsc/thingbuf   time:   [25.831 ms 25.912 ms 26.015 ms]
+                        thrpt:  [3.8440 Melem/s 3.8593 Melem/s 3.8713 Melem/s]
+bakeoff_mpsc/thingbuf_ref
+                        thrpt:  [4.4166 Melem/s 4.4286 Melem/s 4.4390 Melem/s]
+backoff_isolation/busyspin_poll
+                        thrpt:  [33.207 Melem/s 33.291 Melem/s 33.370 Melem/s]
+backoff_isolation/busyspin_block
+                        thrpt:  [31.296 Melem/s 31.374 Melem/s 31.449 Melem/s]
+backoff_isolation/park_poll
+                        thrpt:  [6.4879 Melem/s 6.5636 Melem/s 6.6338 Melem/s]
+backoff_isolation/park_block
+                        thrpt:  [6.7767 Melem/s 6.9464 Melem/s 7.1253 Melem/s]
+### round=2 align=3 point=smt2x2
+spsc/busy_spin_pipelined
+                        thrpt:  [133.57 Melem/s 133.64 Melem/s 133.71 Melem/s]
+bakeoff_mpsc/ultima     time:   [2.9741 ms 2.9832 ms 2.9926 ms]
+                        thrpt:  [33.416 Melem/s 33.521 Melem/s 33.624 Melem/s]
+bakeoff_mpsc/crossbeam  time:   [2.6457 ms 2.7244 ms 2.8116 ms]
+                        thrpt:  [35.567 Melem/s 36.705 Melem/s 37.797 Melem/s]
+bakeoff_mpsc/flume      time:   [16.407 ms 16.546 ms 16.695 ms]
+                        thrpt:  [5.9899 Melem/s 6.0438 Melem/s 6.0948 Melem/s]
+bakeoff_mpsc/kanal      time:   [118.39 ms 119.10 ms 119.81 ms]
+                        thrpt:  [834.66 Kelem/s 839.61 Kelem/s 844.67 Kelem/s]
+bakeoff_mpsc/thingbuf   time:   [26.540 ms 26.567 ms 26.598 ms]
+                        thrpt:  [3.7597 Melem/s 3.7640 Melem/s 3.7680 Melem/s]
+bakeoff_mpsc/thingbuf_ref
+                        thrpt:  [4.1874 Melem/s 4.2029 Melem/s 4.2238 Melem/s]
+backoff_isolation/busyspin_poll
+                        thrpt:  [33.532 Melem/s 33.608 Melem/s 33.681 Melem/s]
+backoff_isolation/busyspin_block
+                        thrpt:  [31.414 Melem/s 31.491 Melem/s 31.561 Melem/s]
+backoff_isolation/park_poll
+                        thrpt:  [8.6832 Melem/s 8.7397 Melem/s 8.7908 Melem/s]
+backoff_isolation/park_block
+                        thrpt:  [6.2477 Melem/s 6.3383 Melem/s 6.4344 Melem/s]
+### round=2 align=4 point=smt2x2
+spsc/busy_spin_pipelined
+                        thrpt:  [175.14 Melem/s 175.42 Melem/s 175.75 Melem/s]
+bakeoff_mpsc/ultima     time:   [2.9353 ms 2.9402 ms 2.9452 ms]
+                        thrpt:  [33.954 Melem/s 34.011 Melem/s 34.068 Melem/s]
+bakeoff_mpsc/crossbeam  time:   [2.9573 ms 3.0595 ms 3.1607 ms]
+                        thrpt:  [31.639 Melem/s 32.685 Melem/s 33.815 Melem/s]
+bakeoff_mpsc/flume      time:   [20.489 ms 20.649 ms 20.815 ms]
+                        thrpt:  [4.8042 Melem/s 4.8429 Melem/s 4.8806 Melem/s]
+bakeoff_mpsc/kanal      time:   [110.24 ms 110.80 ms 111.34 ms]
+                        thrpt:  [898.15 Kelem/s 902.55 Kelem/s 907.11 Kelem/s]
+bakeoff_mpsc/thingbuf   time:   [18.562 ms 18.595 ms 18.630 ms]
+                        thrpt:  [5.3677 Melem/s 5.3777 Melem/s 5.3873 Melem/s]
+bakeoff_mpsc/thingbuf_ref
+                        thrpt:  [5.2977 Melem/s 5.3030 Melem/s 5.3088 Melem/s]
+backoff_isolation/busyspin_poll
+                        thrpt:  [33.749 Melem/s 33.821 Melem/s 33.888 Melem/s]
+backoff_isolation/busyspin_block
+                        thrpt:  [32.150 Melem/s 32.224 Melem/s 32.292 Melem/s]
+backoff_isolation/park_poll
+                        thrpt:  [9.4190 Melem/s 9.4751 Melem/s 9.5252 Melem/s]
+backoff_isolation/park_block
+                        thrpt:  [6.4408 Melem/s 6.5772 Melem/s 6.7163 Melem/s]
+### round=2 align=5 point=smt2x2
+spsc/busy_spin_pipelined
+                        thrpt:  [111.13 Melem/s 111.37 Melem/s 111.60 Melem/s]
+bakeoff_mpsc/ultima     time:   [3.0564 ms 3.0656 ms 3.0750 ms]
+                        thrpt:  [32.521 Melem/s 32.620 Melem/s 32.718 Melem/s]
+bakeoff_mpsc/crossbeam  time:   [2.4791 ms 2.5558 ms 2.6319 ms]
+                        thrpt:  [37.995 Melem/s 39.127 Melem/s 40.337 Melem/s]
+bakeoff_mpsc/flume      time:   [20.036 ms 20.181 ms 20.336 ms]
+                        thrpt:  [4.9174 Melem/s 4.9551 Melem/s 4.9910 Melem/s]
+bakeoff_mpsc/kanal      time:   [118.20 ms 118.97 ms 119.74 ms]
+                        thrpt:  [835.17 Kelem/s 840.58 Kelem/s 846.05 Kelem/s]
+bakeoff_mpsc/thingbuf   time:   [22.236 ms 22.274 ms 22.313 ms]
+                        thrpt:  [4.4816 Melem/s 4.4895 Melem/s 4.4971 Melem/s]
+bakeoff_mpsc/thingbuf_ref
+                        thrpt:  [3.8371 Melem/s 3.8486 Melem/s 3.8638 Melem/s]
+backoff_isolation/busyspin_poll
+                        thrpt:  [33.897 Melem/s 33.975 Melem/s 34.047 Melem/s]
+backoff_isolation/busyspin_block
+                        thrpt:  [32.423 Melem/s 32.490 Melem/s 32.548 Melem/s]
+backoff_isolation/park_poll
+                        thrpt:  [13.604 Melem/s 13.768 Melem/s 13.940 Melem/s]
+backoff_isolation/park_block
+                        thrpt:  [9.4962 Melem/s 9.7454 Melem/s 10.005 Melem/s]
+### round=2 align=6 point=smt2x2
+spsc/busy_spin_pipelined
+                        thrpt:  [129.17 Melem/s 129.27 Melem/s 129.35 Melem/s]
+bakeoff_mpsc/ultima     time:   [2.9791 ms 2.9861 ms 2.9933 ms]
+                        thrpt:  [33.408 Melem/s 33.489 Melem/s 33.567 Melem/s]
+bakeoff_mpsc/crossbeam  time:   [3.3924 ms 3.4677 ms 3.5354 ms]
+                        thrpt:  [28.285 Melem/s 28.837 Melem/s 29.478 Melem/s]
+bakeoff_mpsc/flume      time:   [18.297 ms 18.429 ms 18.564 ms]
+                        thrpt:  [5.3867 Melem/s 5.4263 Melem/s 5.4653 Melem/s]
+bakeoff_mpsc/kanal      time:   [127.94 ms 129.18 ms 130.44 ms]
+                        thrpt:  [766.61 Kelem/s 774.10 Kelem/s 781.62 Kelem/s]
+bakeoff_mpsc/thingbuf   time:   [19.577 ms 19.633 ms 19.691 ms]
+                        thrpt:  [5.0784 Melem/s 5.0934 Melem/s 5.1080 Melem/s]
+bakeoff_mpsc/thingbuf_ref
+                        thrpt:  [3.6846 Melem/s 3.6908 Melem/s 3.6973 Melem/s]
+backoff_isolation/busyspin_poll
+                        thrpt:  [33.193 Melem/s 33.277 Melem/s 33.359 Melem/s]
+backoff_isolation/busyspin_block
+                        thrpt:  [31.370 Melem/s 31.456 Melem/s 31.544 Melem/s]
+backoff_isolation/park_poll
+                        thrpt:  [8.2364 Melem/s 8.2847 Melem/s 8.3265 Melem/s]
+backoff_isolation/park_block
+                        thrpt:  [7.2026 Melem/s 7.3367 Melem/s 7.4769 Melem/s]
+### round=3 align=0 point=smt2x2
+spsc/busy_spin_pipelined
+                        thrpt:  [133.45 Melem/s 133.53 Melem/s 133.61 Melem/s]
+bakeoff_mpsc/ultima     time:   [3.0146 ms 3.0214 ms 3.0284 ms]
+                        thrpt:  [33.020 Melem/s 33.097 Melem/s 33.172 Melem/s]
+bakeoff_mpsc/crossbeam  time:   [2.7961 ms 2.8349 ms 2.8680 ms]
+                        thrpt:  [34.867 Melem/s 35.275 Melem/s 35.764 Melem/s]
+bakeoff_mpsc/flume      time:   [19.989 ms 20.102 ms 20.220 ms]
+                        thrpt:  [4.9456 Melem/s 4.9747 Melem/s 5.0027 Melem/s]
+bakeoff_mpsc/kanal      time:   [111.88 ms 112.58 ms 113.29 ms]
+                        thrpt:  [882.68 Kelem/s 888.27 Kelem/s 893.85 Kelem/s]
+bakeoff_mpsc/thingbuf   time:   [22.977 ms 23.008 ms 23.038 ms]
+                        thrpt:  [4.3406 Melem/s 4.3464 Melem/s 4.3522 Melem/s]
+bakeoff_mpsc/thingbuf_ref
+                        thrpt:  [4.4145 Melem/s 4.4237 Melem/s 4.4351 Melem/s]
+backoff_isolation/busyspin_poll
+                        thrpt:  [33.325 Melem/s 33.388 Melem/s 33.450 Melem/s]
+backoff_isolation/busyspin_block
+                        thrpt:  [31.525 Melem/s 31.613 Melem/s 31.700 Melem/s]
+backoff_isolation/park_poll
+                        thrpt:  [15.549 Melem/s 15.859 Melem/s 16.179 Melem/s]
+backoff_isolation/park_block
+                        thrpt:  [13.519 Melem/s 13.870 Melem/s 14.214 Melem/s]
+### round=3 align=3 point=smt2x2
+spsc/busy_spin_pipelined
+                        thrpt:  [110.41 Melem/s 110.51 Melem/s 110.61 Melem/s]
+bakeoff_mpsc/ultima     time:   [2.9687 ms 2.9756 ms 2.9829 ms]
+                        thrpt:  [33.525 Melem/s 33.607 Melem/s 33.685 Melem/s]
+bakeoff_mpsc/crossbeam  time:   [3.0855 ms 3.1926 ms 3.2987 ms]
+                        thrpt:  [30.315 Melem/s 31.323 Melem/s 32.410 Melem/s]
+bakeoff_mpsc/flume      time:   [18.139 ms 18.319 ms 18.505 ms]
+                        thrpt:  [5.4038 Melem/s 5.4588 Melem/s 5.5130 Melem/s]
+bakeoff_mpsc/kanal      time:   [105.66 ms 107.80 ms 109.16 ms]
+                        thrpt:  [916.05 Kelem/s 927.65 Kelem/s 946.41 Kelem/s]
+bakeoff_mpsc/thingbuf   time:   [23.127 ms 23.180 ms 23.234 ms]
+                        thrpt:  [4.3041 Melem/s 4.3141 Melem/s 4.3240 Melem/s]
+bakeoff_mpsc/thingbuf_ref
+                        thrpt:  [3.8182 Melem/s 3.8286 Melem/s 3.8391 Melem/s]
+backoff_isolation/busyspin_poll
+                        thrpt:  [33.382 Melem/s 33.461 Melem/s 33.539 Melem/s]
+backoff_isolation/busyspin_block
+                        thrpt:  [31.462 Melem/s 31.536 Melem/s 31.605 Melem/s]
+backoff_isolation/park_poll
+                        thrpt:  [6.4849 Melem/s 6.5764 Melem/s 6.6568 Melem/s]
+backoff_isolation/park_block
+                        thrpt:  [6.6259 Melem/s 6.7497 Melem/s 6.8794 Melem/s]
+### round=3 align=4 point=smt2x2
+spsc/busy_spin_pipelined
+                        thrpt:  [145.42 Melem/s 145.50 Melem/s 145.58 Melem/s]
+bakeoff_mpsc/ultima     time:   [2.9480 ms 2.9529 ms 2.9583 ms]
+                        thrpt:  [33.803 Melem/s 33.865 Melem/s 33.921 Melem/s]
+bakeoff_mpsc/crossbeam  time:   [2.8174 ms 2.9165 ms 3.0150 ms]
+                        thrpt:  [33.168 Melem/s 34.288 Melem/s 35.494 Melem/s]
+bakeoff_mpsc/flume      time:   [17.196 ms 17.334 ms 17.479 ms]
+                        thrpt:  [5.7211 Melem/s 5.7689 Melem/s 5.8153 Melem/s]
+bakeoff_mpsc/kanal      time:   [122.02 ms 123.01 ms 124.02 ms]
+                        thrpt:  [806.33 Kelem/s 812.94 Kelem/s 819.55 Kelem/s]
+bakeoff_mpsc/thingbuf   time:   [25.201 ms 25.288 ms 25.363 ms]
+                        thrpt:  [3.9428 Melem/s 3.9544 Melem/s 3.9681 Melem/s]
+bakeoff_mpsc/thingbuf_ref
+                        thrpt:  [4.4457 Melem/s 4.4528 Melem/s 4.4599 Melem/s]
+backoff_isolation/busyspin_poll
+                        thrpt:  [33.362 Melem/s 33.453 Melem/s 33.537 Melem/s]
+backoff_isolation/busyspin_block
+                        thrpt:  [32.008 Melem/s 32.066 Melem/s 32.117 Melem/s]
+backoff_isolation/park_poll
+                        thrpt:  [7.1173 Melem/s 7.2089 Melem/s 7.2984 Melem/s]
+backoff_isolation/park_block
+                        thrpt:  [6.3843 Melem/s 6.5129 Melem/s 6.6482 Melem/s]
+### round=3 align=5 point=smt2x2
+spsc/busy_spin_pipelined
+                        thrpt:  [123.40 Melem/s 123.51 Melem/s 123.62 Melem/s]
+bakeoff_mpsc/ultima     time:   [2.9848 ms 2.9918 ms 2.9990 ms]
+                        thrpt:  [33.344 Melem/s 33.425 Melem/s 33.503 Melem/s]
+bakeoff_mpsc/crossbeam  time:   [3.3173 ms 3.3760 ms 3.4269 ms]
+                        thrpt:  [29.181 Melem/s 29.621 Melem/s 30.145 Melem/s]
+bakeoff_mpsc/flume      time:   [17.043 ms 17.206 ms 17.376 ms]
+                        thrpt:  [5.7552 Melem/s 5.8118 Melem/s 5.8676 Melem/s]
+bakeoff_mpsc/kanal      time:   [118.65 ms 121.33 ms 123.75 ms]
+                        thrpt:  [808.05 Kelem/s 824.18 Kelem/s 842.79 Kelem/s]
+bakeoff_mpsc/thingbuf   time:   [20.939 ms 20.964 ms 20.988 ms]
+                        thrpt:  [4.7647 Melem/s 4.7701 Melem/s 4.7759 Melem/s]
+bakeoff_mpsc/thingbuf_ref
+                        thrpt:  [4.7073 Melem/s 4.7105 Melem/s 4.7138 Melem/s]
+backoff_isolation/busyspin_poll
+                        thrpt:  [32.888 Melem/s 32.972 Melem/s 33.051 Melem/s]
+backoff_isolation/busyspin_block
+                        thrpt:  [31.636 Melem/s 31.714 Melem/s 31.788 Melem/s]
+backoff_isolation/park_poll
+                        thrpt:  [8.8421 Melem/s 8.8948 Melem/s 8.9413 Melem/s]
+backoff_isolation/park_block
+                        thrpt:  [5.9797 Melem/s 6.0766 Melem/s 6.1784 Melem/s]
+### round=3 align=6 point=smt2x2
+spsc/busy_spin_pipelined
+                        thrpt:  [116.38 Melem/s 116.52 Melem/s 116.66 Melem/s]
+bakeoff_mpsc/ultima     time:   [3.0207 ms 3.0293 ms 3.0380 ms]
+                        thrpt:  [32.916 Melem/s 33.011 Melem/s 33.105 Melem/s]
+bakeoff_mpsc/crossbeam  time:   [3.4450 ms 3.5325 ms 3.6122 ms]
+                        thrpt:  [27.684 Melem/s 28.309 Melem/s 29.028 Melem/s]
+bakeoff_mpsc/flume      time:   [19.173 ms 19.322 ms 19.478 ms]
+                        thrpt:  [5.1340 Melem/s 5.1755 Melem/s 5.2157 Melem/s]
+bakeoff_mpsc/kanal      time:   [115.23 ms 115.92 ms 116.63 ms]
+                        thrpt:  [857.44 Kelem/s 862.66 Kelem/s 867.85 Kelem/s]
+bakeoff_mpsc/thingbuf   time:   [21.199 ms 21.245 ms 21.292 ms]
+                        thrpt:  [4.6966 Melem/s 4.7070 Melem/s 4.7172 Melem/s]
+bakeoff_mpsc/thingbuf_ref
+                        thrpt:  [3.8046 Melem/s 3.8172 Melem/s 3.8282 Melem/s]
+backoff_isolation/busyspin_poll
+                        thrpt:  [33.339 Melem/s 33.418 Melem/s 33.492 Melem/s]
+backoff_isolation/busyspin_block
+                        thrpt:  [32.193 Melem/s 32.253 Melem/s 32.305 Melem/s]
+backoff_isolation/park_poll
+                        thrpt:  [10.768 Melem/s 10.838 Melem/s 10.908 Melem/s]
+backoff_isolation/park_block
+                        thrpt:  [6.5930 Melem/s 6.7052 Melem/s 6.8197 Melem/s]

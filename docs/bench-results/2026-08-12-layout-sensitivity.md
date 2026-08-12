@@ -1,5 +1,11 @@
 # How much of a benchmark difference is code layout?
 
+> **Still current for the 4-vCPU VM; superseded for the rig.** Budgets for the
+> 16-core `bench-infra/` host are in `2026-08-12-resolution-budgets-rig.md`, and
+> they differ enough to change which machine a given experiment belongs on.
+> Note also that this study used two rounds per alignment where the rig study
+> used three, so its separation of layout from noise is the weaker of the two.
+
 **Date:** 2026-08-12
 **Hardware:** 4-core Linux VM, 15 GiB RAM, no swap
 **Method:** the **same source** built five times with different function
