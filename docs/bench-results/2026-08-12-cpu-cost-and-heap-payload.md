@@ -257,6 +257,16 @@ tables in this directory does not survive contact with a busy process.
 
 # Part 3: a payload that owns memory
 
+> **This section's central conclusion reverses on a larger machine.**
+> `2026-08-12-topology-sweep.md` re-ran the bake-off at 16 physical cores: this
+> crate is **2.07x ahead** of thingbuf's reference API on `String`, where the
+> 1.82x below has it behind. The by-value penalty measured at 3.31x below is
+> also gone at 16 cores (3.46 by value against 3.32 by reference).
+>
+> The numbers below stand for two CPUs. What does not stand is the
+> generalization — "payload sensitivity is the mechanism" is true on a small
+> machine and does not survive the move to a large one.
+
 `bakeoff_mpsc_string` is the same harness with a 64-byte `String`. Producers
 build a message per element, which is what a logging or serialization pipeline
 does. Move-based crates pay one allocation and one free per element; slot-owning
@@ -276,7 +286,7 @@ a path where `Slot::drop` does nothing.
 | crossbeam-channel | 3.71 | 3.71–3.83 | 3.3% | 1.00x |
 | `thingbuf` (`try_send`) | 3.59 | 3.57–3.69 | 3.2% | 0.97x |
 
-## This crate loses, by 1.82x
+## This crate loses, by 1.82x — on this machine
 
 On the payload the closest prior art is designed for, **thingbuf's reference API
 is 1.82x this crate** — 11.87 against 6.52, with no overlap in range. Yesterday's
@@ -302,8 +312,14 @@ The same crates, the same harness, switching only the payload:
 | **thingbuf (ref)** | 18.66 | **11.87** | **1.6x** |
 
 Every move-based design loses an order of magnitude to the allocator. The
-slot-owning design loses 1.6x. That is not a small edge in a benchmark — it is
-the design's entire thesis, and it holds.
+slot-owning design loses 1.6x.
+
+**On two CPUs.** At 16 cores the ordering flips and thingbuf's `String`
+throughput actually *falls* (5.79 → 3.32) while every move-based competitor
+roughly doubles. The leading explanation is that recycling wins while allocation
+is the bottleneck and threads are scheduling-starved, and stops winning once
+threads genuinely run in parallel and per-thread allocator arenas make `String`
+allocation cheap. Not measured — no allocator counters were collected.
 
 ## thingbuf's by-value API discards everything the crate is for
 
@@ -319,6 +335,11 @@ A caller reaching for `try_send` because it looks like every other channel API
 gets the worst cell in this table.
 
 ## What this crate could take from it
+
+**Much less than it looked.** The 1.82x gap that motivated this section is a
+two-CPU result; at 16 cores this crate is 2.07x ahead. Task #28 (record a design
+decision on `Ref<T>`-style access) should be answered with "measured, does not
+generalize" rather than with a redesign.
 
 Nothing here suggests copying `Ref<T>` wholesale — the survey
 (`2026-08-06-thingbuf-survey.md`) already catalogued its costs: every operation

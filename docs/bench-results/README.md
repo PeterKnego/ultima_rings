@@ -144,10 +144,11 @@ stamps partly on thingbuf's bug history (§9) while never measuring the crate. I
 sits at 0.26x crossbeam by value and 0.32x by reference, and its blocking path
 is 1.68x this crate's `Park`.
 
-**A `String` cell was added the same day** (`bakeoff_mpsc_string`,
-`2026-08-12-cpu-cost-and-heap-payload.md`) and it reversed that result: on a
-heap-owning payload thingbuf's reference API is 1.82x this crate. Quote the two
-together or neither.
+**A `String` cell was added the same day** (`bakeoff_mpsc_string`) and reversed
+that result — and the reversal itself then reversed on a bigger machine. On a
+heap-owning payload thingbuf's reference API is 1.82x this crate at 2 CPUs and
+2.07x *behind* it at 16 (`2026-08-12-topology-sweep.md`). No single ratio here
+is quotable without its payload **and** its core count.
 
 `disruptor` still has no `String` cell. It shares thingbuf's in-place model, so
 it is the remaining crate measured only where its design cannot show.

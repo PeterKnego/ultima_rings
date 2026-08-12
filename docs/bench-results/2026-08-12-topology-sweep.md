@@ -154,12 +154,94 @@ never publish. Parking leaves the runqueue entirely and the futex wake schedules
 the consumer precisely when work exists, rather than competing for slices it
 cannot use.
 
+---
+
+# The bake-off moves too, and one result reverses outright
+
+Three interleaved rounds of `bakeoff_mpsc`, `bakeoff_mpsc_string` and
+`bakeoff_park_mpsc`, at 16 physical cores and at 2 CPUs, medians with range.
+
+## MPSC, `u64` payload
+
+| competitor | phys2 | phys16 | vs. crossbeam @16 |
+|---|---:|---:|---:|
+| **ultima_rings** | 4.32 | **20.93** | **1.59x** |
+| crossbeam | 6.28 | 13.15 | 1.00x |
+| thingbuf (ref) | 6.04 | 3.83 | 0.29x |
+| thingbuf (value) | 5.12 | 3.80 | 0.29x |
+| flume | 2.20 | 3.70 | 0.28x |
+| kanal | 0.33 | 0.46 | 0.03x |
+
+**This crate's lead over crossbeam grows with the machine: 1.24x on the original
+VM, 1.59x at 16 cores.** The headline claim survives the move and improves.
+
+kanal is not merely noisy as the earlier documents concluded — it is 0.03x
+crossbeam here, consistently, at both topologies. Its 50% spread on the old box
+hid how far behind it actually is.
+
+## MPSC, `String` payload — the reversal
+
+| competitor | phys2 | phys16 |
+|---|---:|---:|
+| **thingbuf (ref)** | **5.79** | 3.32 |
+| crossbeam | 3.69 | 6.62 |
+| ultima_rings | 3.00 | **6.87** |
+| thingbuf (value) | 2.71 | 3.46 |
+
+| | thingbuf-ref vs. ultima |
+|---|---:|
+| original VM (4 CPUs / 2 cores) | **1.82x ahead** |
+| phys2 (2 CPUs) | **1.93x ahead** |
+| phys16 | **2.07x behind** |
+
+**`2026-08-12-cpu-cost-and-heap-payload.md` concluded that thingbuf's reference
+API is 1.82x this crate on heap-owning payloads. That holds on two CPUs and
+inverts on sixteen.** At 16 cores this crate is 2.07x ahead of it.
+
+Two supporting observations point the same way. thingbuf's by-value penalty —
+measured at 3.31x on the old box and presented as the crate's central design
+lesson — is **gone** at 16 cores: 3.46 by value against 3.32 by reference, with
+by-value marginally ahead. And thingbuf's absolute throughput *falls* from phys2
+to phys16 on `String` (5.79 → 3.32) while every move-based competitor roughly
+doubles.
+
+The likely reading is that slot recycling wins when allocation is the bottleneck
+and threads are scheduling-starved, and stops winning once threads genuinely run
+in parallel, where per-thread allocator arenas make `String` allocation cheap and
+the `Ref` machinery is pure overhead. That mechanism is **not measured** — no
+allocator counters were collected — so treat it as the leading explanation
+rather than an established one.
+
+What is established is narrower and enough: **the heap-payload result does not
+generalize across core counts, and the direction of the comparison depends on
+the machine.**
+
+## Blocking path
+
+| competitor | phys2 | phys16 |
+|---|---:|---:|
+| crossbeam blocking | 35.19 | 13.05 |
+| thingbuf blocking | 27.44 | 3.80 |
+| **ultima `Park`** | 3.58 | 4.37 |
+
+`Park` remains the weakest blocking path in the roster — 0.10x crossbeam at 2
+CPUs, 0.33x at 16 — so the gap narrows with cores but does not close. Note this
+is the *idle*-machine condition; under external load `Park` leads everything, as
+above.
+
+The phys2 column also shows crossbeam's blocking path at 35.19 against its own
+polling path at 6.28. At three threads on two CPUs, parking beats spinning by
+5.6x for the same crate, which is finding 2 again from a different direction.
+
 ## What has to change
 
 - **`src/wait.rs`** must state the core count beside every oversubscription
   figure, and must not present `Park` as simply the slow option.
 - **`docs/design.md`** has no statement about behaviour under external load,
   which is where `Park` is 5–24x ahead.
+- **The heap-payload conclusion** in `2026-08-12-cpu-cost-and-heap-payload.md`
+  needs its core count attached, and its "payload sensitivity is the mechanism"
+  framing needs the caveat that the effect reverses by 16 cores.
 - **Nothing measured is retracted.** Every published figure reproduces at the
   topology it was taken on. What was wrong was calling 4 CPUs "4 cores" and
   generalizing 2-core magnitudes.
@@ -173,6 +255,12 @@ cannot use.
   a claim cursor would be expected to behave worst.
 - **SMT points are limited to `smt2x2` and `smt8x2`.** The interaction of SMT
   with oversubscription at large core counts is not mapped.
+- **The bake-off ran only at `phys16` and `phys2`, not at `smt2x2`.** So no
+  bake-off cell reproduces the original VM's exact topology. `phys2` gives a
+  similar `String` ratio (1.93x against the VM's 1.82x) but reaches it with 3
+  threads on 2 CPUs rather than on 4, which finding 2 shows is a materially
+  different condition. The crossover between 2 CPUs and 16 is solid; the precise
+  comparison against the old box is not.
 - **No cpufreq control.** EC2 exposes no governor; turbo is on. Deliberate — see
   `bench-infra/README.md`.
 - **Absolute values do not transfer** to or from the original VM. Only the
