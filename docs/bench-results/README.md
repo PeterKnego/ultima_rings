@@ -129,6 +129,11 @@ above, or a five-round confirmation.
 - **Vary the payload, not just the crate.** Switching `u64` to a 64-byte
   `String` moved competitors by between 1.6x and 15.8x and reversed one ranking
   outright. A roster measured at one payload is a roster measured at one point.
+- **Replicate on a second machine before generalizing.** The `String` cell
+  looked like a clean design finding on one box and failed to reproduce at
+  matched topology on another. `bench-infra/` exists for this.
+- **`taskset` does not pin the allocator.** glibc sizes its arena pool from the
+  whole machine, so a core-count sweep does not control allocation-bound cells.
 - **Watch for byte-identical repeat numbers.** They mean a filter matched
   nothing and criterion re-reported a stale `estimates.json`, usually after a
   `git stash` took the bench code along with the source.
@@ -144,11 +149,17 @@ stamps partly on thingbuf's bug history (§9) while never measuring the crate. I
 sits at 0.26x crossbeam by value and 0.32x by reference, and its blocking path
 is 1.68x this crate's `Park`.
 
-**A `String` cell was added the same day** (`bakeoff_mpsc_string`) and reversed
-that result — and the reversal itself then reversed on a bigger machine. On a
-heap-owning payload thingbuf's reference API is 1.82x this crate at 2 CPUs and
-2.07x *behind* it at 16 (`2026-08-12-topology-sweep.md`). No single ratio here
-is quotable without its payload **and** its core count.
+**A `String` cell was added the same day** (`bakeoff_mpsc_string`) and it is the
+least trustworthy cell in this directory. thingbuf's reference API measures
+3.199x crossbeam on the 4-CPU VM and 0.531x at the same topology on an Intel
+host — 6x apart, opposite sides of the baseline
+(`2026-08-12-topology-sweep.md`). Some of that is glibc arena count, which
+`taskset` does not constrain; most of it is unexplained. **Quote no direction
+from this cell.**
+
+By contrast the `u64` and `Park` cells replicate well across both machines —
+`ultima` leads crossbeam by 1.08x–1.61x and `ultima_park` sits at 0.25x–0.29x
+everywhere.
 
 `disruptor` still has no `String` cell. It shares thingbuf's in-place model, so
 it is the remaining crate measured only where its design cannot show.

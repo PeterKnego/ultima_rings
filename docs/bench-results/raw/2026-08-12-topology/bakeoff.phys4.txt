@@ -1,0 +1,79 @@
+=== bakeoff phys4 ===
+bakeoff_mpsc/ultima     time:   [4.8150 ms 4.8216 ms 4.8285 ms]
+                        thrpt:  [20.711 Melem/s 20.740 Melem/s 20.768 Melem/s]
+bakeoff_mpsc/crossbeam  time:   [7.7106 ms 7.7390 ms 7.7668 ms]
+                        thrpt:  [12.875 Melem/s 12.922 Melem/s 12.969 Melem/s]
+bakeoff_mpsc/flume      time:   [24.231 ms 24.314 ms 24.398 ms]
+                        thrpt:  [4.0987 Melem/s 4.1129 Melem/s 4.1270 Melem/s]
+bakeoff_mpsc/kanal      time:   [210.77 ms 212.12 ms 213.44 ms]
+                        thrpt:  [468.51 Kelem/s 471.44 Kelem/s 474.46 Kelem/s]
+bakeoff_mpsc/thingbuf   time:   [23.936 ms 23.959 ms 23.983 ms]
+                        thrpt:  [4.1696 Melem/s 4.1737 Melem/s 4.1779 Melem/s]
+bakeoff_mpsc/thingbuf_ref
+                        thrpt:  [3.2136 Melem/s 3.2176 Melem/s 3.2217 Melem/s]
+bakeoff_mpsc_string/ultima
+                        thrpt:  [6.9407 Melem/s 6.9558 Melem/s 6.9710 Melem/s]
+bakeoff_mpsc_string/crossbeam
+                        thrpt:  [7.0422 Melem/s 7.3429 Melem/s 7.6517 Melem/s]
+bakeoff_mpsc_string/thingbuf
+                        thrpt:  [3.8549 Melem/s 3.8634 Melem/s 3.8721 Melem/s]
+bakeoff_mpsc_string/thingbuf_ref
+                        thrpt:  [3.9009 Melem/s 3.9088 Melem/s 3.9169 Melem/s]
+bakeoff_park_mpsc/ultima_park
+                        thrpt:  [4.0517 Melem/s 4.0675 Melem/s 4.0830 Melem/s]
+bakeoff_park_mpsc/crossbeam_blocking
+                        thrpt:  [12.621 Melem/s 12.669 Melem/s 12.719 Melem/s]
+bakeoff_park_mpsc/thingbuf_blocking
+                        thrpt:  [3.2526 Melem/s 3.2586 Melem/s 3.2654 Melem/s]
+bakeoff_mpsc/ultima     time:   [4.8722 ms 4.8820 ms 4.8919 ms]
+                        thrpt:  [20.442 Melem/s 20.483 Melem/s 20.525 Melem/s]
+bakeoff_mpsc/crossbeam  time:   [6.3955 ms 6.4200 ms 6.4447 ms]
+                        thrpt:  [15.517 Melem/s 15.576 Melem/s 15.636 Melem/s]
+bakeoff_mpsc/flume      time:   [25.106 ms 25.145 ms 25.185 ms]
+                        thrpt:  [3.9706 Melem/s 3.9769 Melem/s 3.9832 Melem/s]
+bakeoff_mpsc/kanal      time:   [235.40 ms 237.13 ms 238.87 ms]
+                        thrpt:  [418.63 Kelem/s 421.72 Kelem/s 424.80 Kelem/s]
+bakeoff_mpsc/thingbuf   time:   [26.625 ms 26.659 ms 26.693 ms]
+                        thrpt:  [3.7463 Melem/s 3.7511 Melem/s 3.7559 Melem/s]
+bakeoff_mpsc/thingbuf_ref
+                        thrpt:  [3.7238 Melem/s 3.7286 Melem/s 3.7335 Melem/s]
+bakeoff_mpsc_string/ultima
+                        thrpt:  [6.4825 Melem/s 6.4917 Melem/s 6.5013 Melem/s]
+bakeoff_mpsc_string/crossbeam
+                        thrpt:  [8.1819 Melem/s 8.3506 Melem/s 8.5222 Melem/s]
+bakeoff_mpsc_string/thingbuf
+                        thrpt:  [4.2033 Melem/s 4.2098 Melem/s 4.2182 Melem/s]
+bakeoff_mpsc_string/thingbuf_ref
+                        thrpt:  [3.8437 Melem/s 3.8525 Melem/s 3.8615 Melem/s]
+bakeoff_park_mpsc/ultima_park
+                        thrpt:  [3.7168 Melem/s 3.7342 Melem/s 3.7519 Melem/s]
+bakeoff_park_mpsc/crossbeam_blocking
+                        thrpt:  [15.992 Melem/s 16.058 Melem/s 16.124 Melem/s]
+bakeoff_park_mpsc/thingbuf_blocking
+                        thrpt:  [3.3293 Melem/s 3.3390 Melem/s 3.3498 Melem/s]
+bakeoff_mpsc/ultima     time:   [4.5576 ms 4.5626 ms 4.5677 ms]
+                        thrpt:  [21.893 Melem/s 21.917 Melem/s 21.941 Melem/s]
+bakeoff_mpsc/crossbeam  time:   [8.0464 ms 8.0776 ms 8.1079 ms]
+                        thrpt:  [12.334 Melem/s 12.380 Melem/s 12.428 Melem/s]
+bakeoff_mpsc/flume      time:   [30.160 ms 30.195 ms 30.229 ms]
+                        thrpt:  [3.3081 Melem/s 3.3119 Melem/s 3.3157 Melem/s]
+bakeoff_mpsc/kanal      time:   [208.96 ms 210.27 ms 211.59 ms]
+                        thrpt:  [472.62 Kelem/s 475.57 Kelem/s 478.56 Kelem/s]
+bakeoff_mpsc/thingbuf   time:   [23.874 ms 23.905 ms 23.936 ms]
+                        thrpt:  [4.1778 Melem/s 4.1832 Melem/s 4.1887 Melem/s]
+bakeoff_mpsc/thingbuf_ref
+                        thrpt:  [4.0929 Melem/s 4.0983 Melem/s 4.1037 Melem/s]
+bakeoff_mpsc_string/ultima
+                        thrpt:  [6.8117 Melem/s 6.8259 Melem/s 6.8399 Melem/s]
+bakeoff_mpsc_string/crossbeam
+                        thrpt:  [8.0797 Melem/s 8.1543 Melem/s 8.2265 Melem/s]
+bakeoff_mpsc_string/thingbuf
+                        thrpt:  [3.2524 Melem/s 3.2638 Melem/s 3.2768 Melem/s]
+bakeoff_mpsc_string/thingbuf_ref
+                        thrpt:  [3.2289 Melem/s 3.2317 Melem/s 3.2348 Melem/s]
+bakeoff_park_mpsc/ultima_park
+                        thrpt:  [4.2548 Melem/s 4.2711 Melem/s 4.2873 Melem/s]
+bakeoff_park_mpsc/crossbeam_blocking
+                        thrpt:  [19.810 Melem/s 19.878 Melem/s 19.949 Melem/s]
+bakeoff_park_mpsc/thingbuf_blocking
+                        thrpt:  [3.6623 Melem/s 3.6727 Melem/s 3.6842 Melem/s]
