@@ -80,13 +80,13 @@ saturated table.
 
 Three further findings:
 
-**`BackoffYield` burns 100.0% of a core — it saves nothing.** `src/wait.rs`
-already warned that "this does not reduce CPU use on an idle machine", and that
-warning is now exactly right to a tenth of a percent. With nothing else runnable,
-`yield_now` returns immediately, so the yield ladder is a busy-wait with a
-syscall in it. It buys politeness under contention, not idle CPU. This is worth
-stating loudly because the name suggests otherwise, and because the strategy was
-added earlier in this session on a latency argument alone.
+**`BackoffYield` burns 100.0% of a core.** `src/wait.rs` already warned that
+"this does not reduce CPU use on an idle machine", and that warning is right to a
+tenth of a percent. With nothing else runnable, `yield_now` returns immediately,
+so the yield ladder is a busy-wait with a syscall in it.
+
+Do not read that as "the strategy has no purpose" — this table cannot see its
+purpose. See Part 2, which measures the regime where it exists.
 
 **`Backoff` is 10.2% of a core, not zero.** `src/wait.rs` called both it and
 `Park` "no idle CPU". That was right about `Park` to within 1.8% and overstated
@@ -107,7 +107,78 @@ differ by 57x in idle CPU cost.
 
 ---
 
-# Part 2: a payload that owns memory
+# Part 2: oversubscription, and what `BackoffYield` is actually for
+
+Part 1 runs at most three threads on four cores, in both its sections. That is
+the one regime in which `BackoffYield` is definitionally inert: `yield_now`
+returns immediately unless another thread is runnable, so with nothing else
+runnable it is `BusySpin` with a syscall in the loop.
+
+Reading only the paced table, the strategy looks pointless — 100.0% of a core
+against `BusySpin`'s 99.9%, at 26x coarser wake granularity, dominated on both
+axes. **That conclusion is an artifact of the measurement, and it is wrong.**
+
+Blocking `send`/`recv`, 4 cores, 200k elements, median of 3 runs:
+
+| strategy | p2 | p8 (2x over) | p32 (8x over) |
+|---|---:|---:|---:|
+| `BusySpin` | **69.11** | 35.67 | 4.84 |
+| `BackoffYield` | 71.45 | **62.77** | 35.65 |
+| `Backoff` | 58.72 | 61.17 | **36.64** |
+| `Park` | 10.92 | 11.13 | 11.76 |
+
+Melem/s, medians. And the CPU cost per element over the same sweep:
+
+| strategy | p2 | p8 | p32 |
+|---|---:|---:|---:|
+| `BusySpin` | 28.3 | 48.9 | 712.5 |
+| `BackoffYield` | 28.2 | 29.2 | 35.5 |
+| `Backoff` | 25.3 | 34.6 | 39.3 |
+| `Park` | 229.4 | 275.4 | 237.5 |
+
+## Findings
+
+**`BackoffYield` is 1.76x `BusySpin` at p8 and 7.37x at p32**, separated in both
+cases — no overlap across three runs. It is simultaneously *cheaper*: 29.2
+against 48.9 CPU ns per element at p8, and 35.5 against 712.5 at p32. Faster and
+cheaper at once, which is not a trade at all once threads outnumber cores.
+
+The mechanism is the one `src/wait.rs` claimed: a spinner burns the core that
+the thread it is waiting on needs to make the progress it is waiting for.
+Yielding hands that core over. It requires threads to outnumber cores, which is
+exactly why Part 1 could not see it.
+
+**Below saturation there is no difference.** 71.45 against 69.11 at p2 — a 3%
+gap against `BusySpin`'s own 27.7% run-to-run spread. An earlier single run
+showed 1.35x here and did not reproduce; two further runs put it inside the
+noise.
+
+**`BusySpin` does not merely degrade under oversubscription, it becomes
+unpredictable.** Its p32 samples were 4.71, 4.84 and 19.93 Melem/s — a 4.2x
+range, against `BackoffYield`'s 33.78–43.17. A strategy whose throughput varies
+4x run to run is hard to build a latency budget on.
+
+**`Park` is flat and slowest: 10.92, 11.13, 11.76 across a 16x change in
+producer count.** It is the only strategy indifferent to the thread-to-core
+ratio, because a parked thread is not competing for a core at all. Always last,
+never collapses.
+
+**`BackoffYield` and `Backoff` are a wash on throughput** at every producer
+count measured. So the case for `BackoffYield` over `Backoff` rests entirely on
+wake granularity — ~0.7 µs against a ~64 µs OS-timer floor — paid for with a
+held core while idle (100.0% against 10.2%). That is a real niche and a narrow
+one, and it is now stated in terms of measured numbers rather than intent.
+
+## Correction
+
+An earlier reading of Part 1 in this session concluded that `BackoffYield` had
+no advantage and was dominated by `BusySpin`. That was drawn from the paced
+table alone, which measures the single regime where the strategy cannot work.
+The advantage is real and up to 7.37x.
+
+---
+
+# Part 3: a payload that owns memory
 
 `bakeoff_mpsc_string` is the same harness with a 64-byte `String`. Producers
 build a message per element, which is what a logging or serialization pipeline
@@ -194,6 +265,12 @@ rather than a change.
   and would be expected to show the same low payload sensitivity. Untested.
 - **The paced section uses one producer.** Idle CPU for a *blocked producer*
   (ring full) is unmeasured; only the consumer side is.
+- **The oversubscription sweep has high variance**, particularly `BusySpin` at
+  p32 (4.71–19.93) and `Backoff` at p2 (33.13–72.68). The separations quoted
+  hold across three runs, but the point estimates should not be quoted to two
+  significant figures.
+- **Oversubscription is simulated with producers only.** Competing threads that
+  are not part of the channel — the more common real case — are untested.
 - **Thread-spawn cost** is inside the measured wall time in `cpu_cost.rs`, at
   roughly 1% of the total. It is not subtracted.
 - **Saturated `cores` never reaches 3.0** (2.4–2.8) because producers finish

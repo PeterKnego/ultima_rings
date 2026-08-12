@@ -49,6 +49,10 @@ const ROUNDS: usize = 3;
 const PACED_GAP: std::time::Duration = std::time::Duration::from_micros(200);
 const PACED_ELEMS: u64 = 5_000;
 
+/// Oversubscription section. 4 cores, so p8 is 2x oversubscribed and p32 is 8x.
+const OVER_BATCH: u64 = 200_000;
+const OVER_ITERS: u64 = 3;
+
 /// Nanoseconds this thread has spent on CPU, from `/proc/thread-self/schedstat`.
 ///
 /// Field 0 is `sum_exec_runtime` in nanoseconds — time on CPU, excluding time
@@ -68,11 +72,12 @@ fn thread_cpu_ns() -> u64 {
 struct Run {
     wall_ns: u128,
     cpu_ns: u64,
+    elems: u64,
 }
 
 impl Run {
     fn elems(&self) -> u64 {
-        BATCH * ITERS
+        self.elems
     }
     fn melem_per_s(&self) -> f64 {
         self.elems() as f64 / (self.wall_ns as f64 / 1e9) / 1e6
@@ -90,7 +95,23 @@ impl Run {
 ///
 /// `send` returns false to abandon the run (channel disconnected); `recv`
 /// returns true when it took one element.
-fn measure<S, R, FS, FR>(make: impl Fn() -> (S, R), send: FS, mut recv: FR) -> Run
+fn measure<S, R, FS, FR>(make: impl Fn() -> (S, R), send: FS, recv: FR) -> Run
+where
+    S: Clone + Send + 'static,
+    FS: Fn(&mut S, u64) -> bool + Clone + Send + 'static,
+    FR: FnMut(&mut R) -> bool,
+{
+    measure_with(PRODUCERS, BATCH, ITERS, make, send, recv)
+}
+
+fn measure_with<S, R, FS, FR>(
+    producers: u64,
+    batch: u64,
+    iters: u64,
+    make: impl Fn() -> (S, R),
+    send: FS,
+    mut recv: FR,
+) -> Run
 where
     S: Clone + Send + 'static,
     FS: Fn(&mut S, u64) -> bool + Clone + Send + 'static,
@@ -99,19 +120,19 @@ where
     let mut cpu_ns = 0u64;
     let wall = Instant::now();
 
-    for _ in 0..ITERS {
+    for _ in 0..iters {
         let (tx, mut rx) = make();
-        let barrier = Arc::new(Barrier::new(PRODUCERS as usize + 1));
+        let barrier = Arc::new(Barrier::new(producers as usize + 1));
         let mut handles = Vec::new();
 
-        for _ in 0..PRODUCERS {
+        for _ in 0..producers {
             let mut tx = tx.clone();
             let send = send.clone();
             let barrier = Arc::clone(&barrier);
             handles.push(thread::spawn(move || {
                 barrier.wait();
                 let t0 = thread_cpu_ns();
-                for i in 0..BATCH / PRODUCERS {
+                for i in 0..batch / producers {
                     if !send(&mut tx, i) {
                         break;
                     }
@@ -124,7 +145,8 @@ where
         barrier.wait();
         let t0 = thread_cpu_ns();
         let mut got = 0u64;
-        while got < BATCH {
+        let target = (batch / producers) * producers;
+        while got < target {
             if !recv(&mut rx) {
                 break;
             }
@@ -140,6 +162,7 @@ where
     Run {
         wall_ns: wall.elapsed().as_nanos(),
         cpu_ns,
+        elems: (batch / producers) * producers * iters,
     }
 }
 
@@ -424,4 +447,68 @@ fn main() {
          element every {:?}.",
         PACED_GAP
     );
+
+    // -----------------------------------------------------------------------
+    // Oversubscription. The only condition under which BackoffYield can differ
+    // from BusySpin: `yield_now` returns immediately unless another thread is
+    // runnable, so on an idle box the two are the same loop and the paced table
+    // above shows exactly that (100.0% against 99.9% of a core).
+    //
+    // The mechanism it is supposed to buy is not fairness — CFS already gives a
+    // spinner only its fair share — but escaping the case where the thread you
+    // are *waiting on* is descheduled and you are burning the core it needs.
+    // That case requires threads to outnumber cores, so this section climbs
+    // past the box's 4.
+    //
+    // Note this uses the blocking send/recv path. `try_send` never consults the
+    // wait strategy at all, so mpsc_producer_ladder in benches/throughput.rs
+    // cannot answer this question no matter which strategy it is given.
+    // -----------------------------------------------------------------------
+    println!(
+        "\n\nOversubscribed: blocking send/recv, {OVER_BATCH} elements, \
+         {OVER_ITERS} iterations, median of {ROUNDS}.\nThis box has 4 cores, so \
+         p8 is 2x oversubscribed and p32 is 8x.\n"
+    );
+    println!(
+        "{:<22} {:>9} {:>9} {:>8} {:>12}",
+        "strategy", "producers", "Melem/s", "cores", "cpu ns/elem"
+    );
+    println!("{}", "-".repeat(64));
+
+    for producers in [2u64, 8, 32] {
+        for (name, strat) in [
+            ("BusySpin", WaitStrategy::BusySpin),
+            ("BackoffYield", WaitStrategy::BackoffYield),
+            ("Backoff", WaitStrategy::Backoff),
+            ("Park", WaitStrategy::Park),
+        ] {
+            let mut runs: Vec<Run> = (0..ROUNDS)
+                .map(|_| {
+                    measure_with(
+                        producers,
+                        OVER_BATCH,
+                        OVER_ITERS,
+                        || mpsc::channel::<u64>(CAP, strat),
+                        |tx: &mut mpsc::Sender<u64>, v| tx.send(v).is_ok(),
+                        |rx: &mut mpsc::Receiver<u64>| rx.recv().is_ok(),
+                    )
+                })
+                .collect();
+            runs.sort_by(|a, b| {
+                a.cpu_ns_per_elem()
+                    .partial_cmp(&b.cpu_ns_per_elem())
+                    .unwrap()
+            });
+            let m = &runs[runs.len() / 2];
+            println!(
+                "{:<22} {:>9} {:>9.2} {:>8.2} {:>12.1}",
+                name,
+                producers,
+                m.melem_per_s(),
+                m.cores(),
+                m.cpu_ns_per_elem(),
+            );
+        }
+        println!();
+    }
 }
