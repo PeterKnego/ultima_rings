@@ -318,6 +318,60 @@ fn bakeoff_spsc(c: &mut Criterion) {
 fn bakeoff_mpsc(c: &mut Criterion) {
     let mut g = c.benchmark_group("bakeoff_mpsc");
     g.throughput(Throughput::Elements(BATCH));
+    // This crate's own cell lives in the group rather than in `mpsc` alongside
+    // the development benches. It is the same harness shape either way, but
+    // keeping it here makes the group self-contained: a filtered run of
+    // `bakeoff_mpsc/` yields every number the comparison table needs, and
+    // cannot silently omit the baseline it is comparing against.
+    g.bench_function("ultima", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (tx, mut rx) = mpsc::channel::<u64>(1024, WaitStrategy::BusySpin);
+                let barrier = Arc::new(Barrier::new(3));
+                let mut handles = Vec::new();
+                for _ in 0..2 {
+                    let mut tx = tx.clone();
+                    let barrier = Arc::clone(&barrier);
+                    handles.push(thread::spawn(move || {
+                        barrier.wait();
+                        for i in 0..BATCH / 2 {
+                            let mut v = i;
+                            loop {
+                                match tx.try_send(v) {
+                                    Ok(()) => break,
+                                    Err(TrySendError::Full(b)) => {
+                                        v = b;
+                                        std::hint::spin_loop();
+                                    }
+                                    Err(TrySendError::Disconnected(_)) => return,
+                                }
+                            }
+                        }
+                    }));
+                }
+                drop(tx);
+                barrier.wait();
+                let t = Instant::now();
+                let mut got = 0u64;
+                loop {
+                    match rx.try_recv() {
+                        Ok(_) => got += 1,
+                        Err(TryRecvError::Empty) => std::hint::spin_loop(),
+                        Err(TryRecvError::Disconnected) => break,
+                    }
+                    if got == BATCH {
+                        break;
+                    }
+                }
+                total += t.elapsed();
+                for h in handles {
+                    h.join().unwrap();
+                }
+            }
+            total
+        })
+    });
     g.bench_function("crossbeam", |b| {
         b.iter_custom(|iters| {
             let mut total = std::time::Duration::ZERO;
@@ -455,6 +509,129 @@ fn bakeoff_mpsc(c: &mut Criterion) {
                             }
                         }
                         Ok(None) => std::hint::spin_loop(),
+                        Err(_) => break,
+                    }
+                }
+                total += t.elapsed();
+                for h in handles {
+                    h.join().unwrap();
+                }
+            }
+            total
+        })
+    });
+    // thingbuf: the closest prior art in the roster — a fixed-capacity
+    // MaybeUninit-slot ring with an MPSC channel layer, same shape as
+    // src/mpsc.rs. Survey:
+    // docs/superpowers/research/2026-08-06-thingbuf-survey.md.
+    //
+    // TWO CELLS, for the same reason the disruptor group has two: thingbuf's
+    // reason for existing is the by-reference API, and its by-value API is
+    // sugar over it.
+    //   thingbuf     — try_send/try_recv, by value. Like-for-like against
+    //                  crossbeam/flume/kanal above.
+    //   thingbuf_ref — try_send_ref/try_recv_ref, the crate's natural API.
+    //
+    // On a u64 payload the ref API cannot show its actual benefit. Slot
+    // recycling exists to avoid reallocating heap-owning payloads (String,
+    // Vec<u8>), and a u64 owns nothing, so `thingbuf_ref` here measures the
+    // cost of the Ref machinery with none of its payoff. Read it as the
+    // overhead of the API, never as a verdict on slot recycling — that verdict
+    // needs a heap-owning payload, which no cell in this file uses.
+    g.bench_function("thingbuf", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (tx, rx) = thingbuf::mpsc::blocking::channel::<u64>(1024);
+                let barrier = Arc::new(Barrier::new(3));
+                let mut handles = Vec::new();
+                for _ in 0..2 {
+                    let tx = tx.clone();
+                    let barrier = Arc::clone(&barrier);
+                    handles.push(thread::spawn(move || {
+                        barrier.wait();
+                        for i in 0..BATCH / 2 {
+                            let mut v = i;
+                            loop {
+                                match tx.try_send(v) {
+                                    Ok(()) => break,
+                                    Err(thingbuf::mpsc::errors::TrySendError::Full(b)) => {
+                                        v = b;
+                                        std::hint::spin_loop();
+                                    }
+                                    Err(_) => return,
+                                }
+                            }
+                        }
+                    }));
+                }
+                drop(tx);
+                barrier.wait();
+                let t = Instant::now();
+                let mut got = 0u64;
+                loop {
+                    match rx.try_recv() {
+                        Ok(_) => {
+                            got += 1;
+                            if got == BATCH {
+                                break;
+                            }
+                        }
+                        Err(thingbuf::mpsc::errors::TryRecvError::Empty) => std::hint::spin_loop(),
+                        Err(_) => break,
+                    }
+                }
+                total += t.elapsed();
+                for h in handles {
+                    h.join().unwrap();
+                }
+            }
+            total
+        })
+    });
+    g.bench_function("thingbuf_ref", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (tx, rx) = thingbuf::mpsc::blocking::channel::<u64>(1024);
+                let barrier = Arc::new(Barrier::new(3));
+                let mut handles = Vec::new();
+                for _ in 0..2 {
+                    let tx = tx.clone();
+                    let barrier = Arc::clone(&barrier);
+                    handles.push(thread::spawn(move || {
+                        barrier.wait();
+                        for i in 0..BATCH / 2 {
+                            loop {
+                                match tx.try_send_ref() {
+                                    Ok(mut slot) => {
+                                        *slot = i;
+                                        break;
+                                    }
+                                    Err(thingbuf::mpsc::errors::TrySendError::Full(())) => {
+                                        std::hint::spin_loop();
+                                    }
+                                    Err(_) => return,
+                                }
+                            }
+                        }
+                    }));
+                }
+                drop(tx);
+                barrier.wait();
+                let t = Instant::now();
+                let mut got = 0u64;
+                loop {
+                    match rx.try_recv_ref() {
+                        Ok(slot) => {
+                            std::hint::black_box(*slot);
+                            drop(slot);
+                            got += 1;
+                            if got == BATCH {
+                                break;
+                            }
+                        }
+                        Err(thingbuf::mpsc::errors::TryRecvError::Empty) => std::hint::spin_loop(),
                         Err(_) => break,
                     }
                 }
@@ -613,6 +790,45 @@ fn bakeoff_park_mpsc(c: &mut Criterion) {
                     match rx.recv() {
                         Ok(_) => got += 1,
                         Err(_) => break,
+                    }
+                }
+                total += t.elapsed();
+                for h in handles {
+                    h.join().unwrap();
+                }
+            }
+            total
+        })
+    });
+    // thingbuf's blocking path: send()/recv() park the thread, the same
+    // contract as ultima_park and crossbeam_blocking above.
+    g.bench_function("thingbuf_blocking", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (tx, rx) = thingbuf::mpsc::blocking::channel::<u64>(1024);
+                let barrier = Arc::new(Barrier::new(3));
+                let mut handles = Vec::new();
+                for _ in 0..2 {
+                    let tx = tx.clone();
+                    let barrier = Arc::clone(&barrier);
+                    handles.push(thread::spawn(move || {
+                        barrier.wait();
+                        for i in 0..BATCH / 2 {
+                            if tx.send(i).is_err() {
+                                return;
+                            }
+                        }
+                    }));
+                }
+                drop(tx);
+                barrier.wait();
+                let t = Instant::now();
+                let mut got = 0u64;
+                while got < BATCH {
+                    match rx.recv() {
+                        Some(_) => got += 1,
+                        None => break,
                     }
                 }
                 total += t.elapsed();
