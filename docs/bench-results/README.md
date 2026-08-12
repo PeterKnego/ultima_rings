@@ -9,50 +9,42 @@ directory can carry.
 **Before quoting any wait-strategy number, check the core count it was taken on**
 (`2026-08-12-topology-sweep.md`). `BackoffYield`'s lead over `BusySpin` under
 oversubscription is 12.3x on 2 cores and 1.2x on 16 — the same effect, measured
-either side of an 8x topology change.
+either side of an 8x topology change. And before believing any difference,
+check it against the per-cell budget below, which also depends on the machine.
 
-## 1. Each cell has its own resolution budget, measured
+## 1. Each cell has its own resolution budget, and it depends on the machine
 
-**Layout is worth about 5%, and per-cell intrinsic noise ranges from 1% to 9%.**
-Both were measured directly rather than inferred: the same source built at five
-different function alignments, where every difference between builds is layout by
-construction (`2026-08-12-layout-sensitivity.md`).
+Measured directly rather than inferred, by building the same source at five
+function alignments so every between-build difference is layout by construction.
+**Minimum detectable effect**, per cell, per machine:
 
-| Cell | layout spread | intrinsic noise | minimum detectable effect |
+| cell | 4-vCPU VM | rig, 16 cores | rig, `smt2x2` |
 |---|---:|---:|---:|
-| `busyspin_poll` | 5.0% | 1.1% | ~6% |
-| `busyspin_block` | 4.6% | 1.5% | ~6% |
-| `park_poll` | 4.4% | 1.6% | ~6% |
-| `spsc` | 9.3% | 7.5% | ~9% |
-| `park_block` | 10.8% | 9.1% | ~11% |
+| `busyspin_poll` | ~6% | **3%** | **2%** |
+| `busyspin_block` | ~6% | **3%** | **3%** |
+| `bakeoff_mpsc/ultima` | — | **2%** | **3%** |
+| `spsc` | ~9% | 17% | 37% |
+| `park_block` | ~11% | 25% | 53% |
+| `park_poll` | ~6% | 62% | 94% |
+| `crossbeam` | — | 22% | 40% |
+| `flume` / `kanal` | — | 41–43% | 13–19% |
 
-Two things follow. Layout is a real effect roughly three times measurement noise,
-so a difference near 5% between two builds may be nothing but code placement. And
-`park_block` and `spsc` are not layout-sensitive so much as simply noisy — their
-variance shows up without any rebuild, so building differently will not fix it.
+Sources: `2026-08-12-layout-sensitivity.md` (VM),
+`2026-08-12-resolution-budgets-rig.md` (rig).
 
-To resolve an effect near a cell's budget, build each variant at several
-alignments and pool the results; see the recipe in
-`2026-08-12-layout-sensitivity.md`.
+**The two machines are good at opposite things.** Spin-path cells are 2–3x
+tighter on the rig; `Park` cells are 6–15x worse there. So the machine is part
+of the experiment design: run spin-path A/Bs on the rig, and anything depending
+on `park_block` or `park_poll` on the small VM. Bigger is not better.
 
-### An earlier version of this section was wrong twice
+**Competitor cells cannot support two-decimal ratios.** crossbeam sits at 22–40%
+MDE, so any bake-off ratio quoted against it inherits that. Directions are
+trustworthy; trends across topologies mostly are not.
 
-It claimed a "~10% floor" on the strength of a control cell that moved on a path
-the change never executed. Both halves were mistaken.
-
-The cell was never a control. `busyspin_block` calls `recv()`, and the change
-under test added roughly twenty lines **inside** `recv()`, so `recv()` was a
-different function in the two builds. The reasoning confused a dead *branch* with
-an unexecuted *function*. The four corners split exactly along that line — the
-two that avoid `recv()` moved +0.4% and −0.6%, the two that call it moved +10.4%
-and +16.0%.
-
-And the floor itself was too pessimistic by half: measured, layout is ~5% for
-well-behaved cells, not 10%.
-
-**A true control must exercise no function the change touches** — an SPSC cell,
-for instance, since `src/spsc.rs` is untouched by MPSC work. Not merely a cell
-whose branch is not taken.
+**On the rig, layout is not separable from run-to-run noise** for essentially any
+cell — the two statistics come out the same size, which is what a null layout
+effect looks like at this sample size. That does not make layout irrelevant; it
+means the MDE column is the only thing to plan against.
 
 ## 2. Wall-clock throughput hides what the spinning costs
 

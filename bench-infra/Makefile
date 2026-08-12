@@ -54,6 +54,14 @@ sweep: ## rsync the tree and run the core-count sweep, then fetch
 	$(SSH) ubuntu@$(HOST) 'source ~/.cargo/env && SKIP_BAKEOFF=$(SKIP_BAKEOFF) SKIP_CPUCOST=$(SKIP_CPUCOST) BAKEOFF_POINTS="$(BAKEOFF_POINTS)" bash $(REMOTE_HOME)/sweep.sh'
 	$(MAKE) fetch
 
+layout: ## rsync + re-derive the resolution budget (5 alignments), then fetch
+	rsync -az --delete -e '$(SSH)' \
+	  --exclude target --exclude .git --exclude bench-infra \
+	  $(SRC)/ ubuntu@$(HOST):$(REMOTE_HOME)/ultima_rings/
+	scp $(SSH_OPTS) -i $(SSH_KEY) remote/layout.sh ubuntu@$(HOST):$(REMOTE_HOME)/
+	$(SSH) ubuntu@$(HOST) 'source ~/.cargo/env && LAYOUT_POINTS="$(LAYOUT_POINTS)" LAYOUT_ROUNDS=$(LAYOUT_ROUNDS) bash $(REMOTE_HOME)/layout.sh'
+	$(MAKE) fetch
+
 fetch: ## pull results into bench-out/<timestamp>/
 	@ts=$$(date -u +%Y%m%dT%H%M%SZ); mkdir -p bench-out/$$ts; \
 	rsync -az -e '$(SSH)' ubuntu@$(HOST):$(REMOTE_HOME)/bench-out/ bench-out/$$ts/; \
