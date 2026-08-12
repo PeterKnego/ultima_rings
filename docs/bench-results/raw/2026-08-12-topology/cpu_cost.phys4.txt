@@ -1,0 +1,74 @@
+### label=phys4 cpulist=0,1,2,3 URINGS_CORES=4
+sized against 4 cores (URINGS_CORES to override; available_parallelism = 4)
+
+2 producers -> 1 consumer, cap 1024, 1000000 u64 per iteration, 5 iterations per run, median of 3
+
+config                       Melem/s    cores  cpu ns/elem
+-----------------------------------------------------------
+ultima BusySpin (poll)         22.99     2.78        120.8
+ultima Park (block)             4.18     2.83        676.2
+crossbeam (poll)                6.28     2.99        475.9
+crossbeam (block)              11.63     2.97        255.1
+thingbuf (poll)                 3.93     2.99        760.2
+thingbuf (block)                3.87     2.99        773.9
+
+cores       = CPU time / wall time. 3.0 means all three threads spun continuously.
+cpu ns/elem = CPU nanoseconds spent per element delivered; lower is cheaper.
+              It is the reciprocal of throughput-per-core, so the two say the same thing.
+
+
+Paced: 1 producer sending every 200µs, 5000 elements, consumer idle between each.
+Consumer CPU only. This is where parking either pays for itself or does not.
+
+config                         cores    % of a core  cpu ns/elem
+-----------------------------------------------------------------
+ultima BusySpin                1.000         100.0%       249935
+ultima BackoffYield            1.000         100.0%       250038
+ultima Backoff                 0.052           5.2%        12910
+ultima Park                    0.032           3.2%         7980
+crossbeam (block)              0.045           4.5%        11208
+thingbuf (block)               0.032           3.2%         8055
+
+cores measured on the consumer thread alone. 1.0 means it held a core saturated
+for the entire run while doing almost nothing — one element every 200µs.
+
+
+Oversubscribed: blocking send/recv, 200000 elements, 3 iterations, median of 3.
+Producer counts are multiples of the 4 cores this run is sized against.
+
+strategy               producers  ratio   Melem/s    cores  cpu ns/elem
+-----------------------------------------------------------------------
+BusySpin                       2   0.5x     18.70     2.56        136.9
+BackoffYield                   2   0.5x     19.12     2.47        129.3
+Backoff                        2   0.5x     17.63     2.29        130.1
+Park                           2   0.5x      4.16     2.71        652.1
+
+BusySpin                       4     1x     12.21     2.83        231.9
+BackoffYield                   4     1x     17.46     3.28        187.8
+Backoff                        4     1x     18.93     3.20        168.9
+Park                           4     1x      5.07     3.33        658.0
+
+BusySpin                       8     2x      5.44     3.17        582.2
+BackoffYield                   8     2x     18.46     3.31        179.5
+Backoff                        8     2x     17.53     2.87        164.0
+Park                           8     2x      5.22     3.61        692.1
+
+BusySpin                      32     8x      3.68     2.97        806.4
+BackoffYield                  32     8x     16.97     2.38        140.3
+Backoff                       32     8x     16.46     2.86        174.0
+Park                          32     8x      4.94     3.54        717.6
+
+
+
+External load: 2 producers + 1 consumer, plus 4 CPU-bound threads outside the channel.
+7 threads on 4 cores. Baseline is those 4 threads alone: 28384 Mops/s.
+
+strategy           Melem/s   ext Mops/s     ext kept  cpu ns/elem
+-----------------------------------------------------------------
+BusySpin              2.40        21800          77%        385.9
+BackoffYield          1.31        27387          96%         87.9
+Backoff               1.47        27435          97%         82.0
+Park                 11.95        23741          84%         52.1
+
+ext kept = external throughput as a fraction of those threads running alone.
+           Below 100% is the channel taking cores from the rest of the process.

@@ -37,6 +37,19 @@
 //! wildly unstable there (4.71–19.93 across three runs at p32). `Park` is the
 //! slowest everywhere and the only strategy indifferent to the ratio.
 //!
+//! **Those figures are from a 4-CPU/2-core VM and do not generalize.** Re-run
+//! across 2–16 physical cores (`2026-08-12-topology-sweep.md`), `BackoffYield`
+//! leads `BusySpin` at 8x oversubscription by 12.3x on 2 cores, 4.6x on 4, and
+//! only **1.2x on 16** — one wasted CPU is half a small machine and 6% of a
+//! large one. The direction holds everywhere; the magnitude is a property of the
+//! core count, so never quote it without one.
+//!
+//! The collapse threshold is **schedulable CPUs, not physical cores**: three
+//! threads on two CPUs collapse `BusySpin` to 7.70 Melem/s, while the same three
+//! threads on four CPUs that are still only two physical cores give 32.38. An
+//! SMT sibling is a poor execution resource but a perfectly good runqueue slot,
+//! which is all this mechanism needs.
+//!
 //! **That table oversubscribes with the channel's own producers. Doing it with
 //! unrelated threads reverses the ranking.** With 2 producers + 1 consumer plus
 //! four CPU-bound threads that never touch the channel, `Park` is fastest and
@@ -56,9 +69,19 @@
 //! | `Park` | 86% |
 //! | `BusySpin` | **77%** |
 //!
-//! A `BusySpin` consumer takes roughly a quarter of the machine's useful work
-//! away from the rest of the process. Budget for that, not just for the core it
-//! holds.
+//! That 77% is a 4-CPU figure. The cost scales with how large a share one CPU
+//! is: `BusySpin` keeps 50% of external throughput on 2 cores, 77% on 4, and 94%
+//! on 16, while `Backoff` and `BackoffYield` stay between 96% and 100% at every
+//! size. Budget for the CPU a spinner holds, as a fraction of the machine you
+//! actually have.
+//!
+//! **Under external load `Park` is the fastest strategy, not the slowest.** With
+//! the machine already busy it leads by 5.0x on 4 cores, 24x on 8 and 14x on 16
+//! (`2026-08-12-topology-sweep.md`), while keeping 70–95% of external throughput
+//! — comparable to `BusySpin` or better. Every "`Park` is ~6x slower" figure in
+//! this crate's documentation was measured on an *idle* machine. On a busy one
+//! the ordering inverts, because a parked consumer is woken when work exists
+//! instead of competing for slices it cannot use.
 
 use std::time::Duration;
 
