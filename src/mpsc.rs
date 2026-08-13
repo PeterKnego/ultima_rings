@@ -24,6 +24,16 @@ use crate::{TryRecvError, TrySendError, assert_cap};
 /// crossbeam-utils' `Backoff` spin ceiling (2^6).
 const CLAIM_BACKOFF_MAX: u32 = 64;
 
+/// Spins the `Park` consumer takes before it commits to a park.
+///
+/// A park/unpark pair costs ~10 µs median on this crate's reference box, where
+/// 64 `spin_loop` hints cost ~1.7 µs — so a publish that lands inside the spin
+/// is absorbed for a fraction of the price of sleeping through it. Applies to
+/// the MPSC consumer only; `src/spsc.rs` has no claim CAS, so it never had the
+/// publish-spacing effect this compensates for, and its `Park` path is
+/// deliberately left alone.
+const PARK_SPINS: u32 = 64;
+
 /// One ring slot: the availability round and its payload in a single struct, so
 /// that a publish or a consume touches ONE cache line rather than two.
 ///
@@ -300,6 +310,35 @@ impl<T: Send> Receiver<T> {
                         // was fixed by `Idle::for_strategy` above.
                         WaitStrategy::Backoff | WaitStrategy::BackoffYield => idle.idle(),
                         WaitStrategy::Park => {
+                            // Spin briefly before committing to a park. A
+                            // park/unpark pair costs ~10 µs median
+                            // (docs/bench-results/2026-08-11-wake-latency.md)
+                            // where PARK_SPINS pauses cost ~1.7 µs, so
+                            // absorbing a publish already in flight is far
+                            // cheaper than sleeping through it. Without this
+                            // the consumer parked on the *first* empty
+                            // observation, and the claim backoff spaces
+                            // publishes enough to make that happen often —
+                            // measured at -24% for the both-sides-blocking
+                            // case (2026-08-11-backoff-isolation.md).
+                            //
+                            // This sits entirely BEFORE the Dekker sequence
+                            // below and does not alter it: the
+                            // prepare_park -> SeqCst fence -> re-check ->
+                            // park/cancel ordering (design.md §3) is
+                            // untouched, so this only delays entry into the
+                            // protocol and cannot introduce a lost wakeup.
+                            let mut spun = false;
+                            for _ in 0..PARK_SPINS {
+                                if self.slot_published(self.head) {
+                                    spun = true;
+                                    break;
+                                }
+                                std::hint::spin_loop();
+                            }
+                            if spun {
+                                continue;
+                            }
                             sh.consumer_parker.prepare_park();
                             crate::atomic::fence(Ordering::SeqCst);
                             if self.slot_published(self.head)
