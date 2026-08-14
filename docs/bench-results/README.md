@@ -196,9 +196,20 @@ crossbeam 1.3x), so most roster comparisons clear the budgets in §1 easily. The
 budget matters when a competitor lands within a few percent — report that as a
 tie rather than a ranking.
 
+## Report ties as ties
+
+Where two cells' ranges overlap, say "tie" rather than ranking them. Given
+crossbeam's 22–40% budget (§1), that rule applies more often than the tables
+suggest — v4 turned two of v3's stated wins into ties, including this crate
+against rtrb on SPSC, which four sessions had been reporting as a small win or
+a small loss when it was neither.
+
 ## Cross-session comparison
 
-Absolute figures are not comparable between sessions. On 2026-08-09 the box ran
-about 20% slower than on 2026-08-06 on *unchanged* code — `src/spsc.rs` and the
+Absolute figures are not comparable between sessions, and the gap can be much
+larger than it first appeared: on 2026-08-14 the box ran roughly **2.4x** slower
+than on 2026-08-12 on unchanged competitor code (crossbeam MPSC 58.64 → 24.73).
+Earlier, on 2026-08-09 the box ran about 20% slower than on 2026-08-06 on
+*unchanged* code — `src/spsc.rs` and the
 third-party `rtrb` fell together — and recovered by 2026-08-11
 (`2026-08-11-bakeoff-v3.md`). Compare ratios measured within one session.
