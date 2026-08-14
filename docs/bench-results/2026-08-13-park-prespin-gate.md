@@ -116,9 +116,11 @@ independently confirms.
 
 - **One machine, one session.** The ratio is robust *within* that session at 20
   pairs; absolute values are not comparable to any other document here.
-- **`PARK_SPINS = 64` is untuned.** It was picked because 64 spin hints cost
-  ~1.7 µs against a ~10 µs park/unpark pair. No sweep was run, so a better value
-  probably exists.
+- ~~**`PARK_SPINS = 64` is untuned.**~~ Swept 2026-08-14 and changed to **16**
+  (`2026-08-14-park-spins-sweep.md`). Throughput is a plateau from 1 to 256 while
+  idle CPU rises monotonically, so 16 gives the same throughput as 64 for 26%
+  less CPU. That sweep also found this gate blind to a real cost: merging at 64
+  raised `Park`'s idle CPU 35%, which a throughput-only gate could not see.
 - **Only 2 producers, cap 1024.** The producer ladder was not re-run with this
   change.
 - **`Backoff` and `BackoffYield` have no cell in `backoff_isolation`**, so the

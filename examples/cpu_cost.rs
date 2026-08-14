@@ -320,6 +320,17 @@ fn report(name: &str, runs: &mut [Run]) {
     );
 }
 
+/// Which sections to run, comma-separated in `URINGS_SECTIONS`:
+/// `saturated`, `paced`, `oversub`, `external`. Default is all of them.
+/// Useful when sweeping a constant and only one section is the question — the
+/// saturated and oversubscription sections take minutes and would dominate.
+fn want(section: &str) -> bool {
+    match std::env::var("URINGS_SECTIONS") {
+        Ok(v) => v.split(',').any(|s| s.trim() == section),
+        Err(_) => true,
+    }
+}
+
 fn main() {
     println!(
         "sized against {} cores (URINGS_CORES to override; \
@@ -333,6 +344,7 @@ fn main() {
         "2 producers -> 1 consumer, cap {CAP}, {BATCH} u64 per iteration, \
          {ITERS} iterations per run, median of {ROUNDS}\n"
     );
+    if want("saturated") {
     println!(
         "{:<26} {:>9} {:>8} {:>12}",
         "config", "Melem/s", "cores", "cpu ns/elem"
@@ -457,6 +469,7 @@ fn main() {
          delivered; lower is cheaper.\n              It is the reciprocal of \
          throughput-per-core, so the two say the same thing."
     );
+    } // end saturated
 
     // -----------------------------------------------------------------------
     // Paced section. The table above cannot show what parking is for: at
@@ -470,6 +483,7 @@ fn main() {
     // sleeping it, because there the goal is timing precision. Here the goal is
     // for the producer to be genuinely off-CPU.
     // -----------------------------------------------------------------------
+    if want("paced") {
     println!(
         "\n\nPaced: 1 producer sending every {:?}, {PACED_ELEMS} elements, \
          consumer idle between each.\nConsumer CPU only. This is where parking \
@@ -528,6 +542,7 @@ fn main() {
          element every {:?}.",
         PACED_GAP
     );
+    } // end paced
 
     // -----------------------------------------------------------------------
     // Oversubscription. The only condition under which BackoffYield can differ
@@ -545,6 +560,7 @@ fn main() {
     // wait strategy at all, so mpsc_producer_ladder in benches/throughput.rs
     // cannot answer this question no matter which strategy it is given.
     // -----------------------------------------------------------------------
+    if want("oversub") {
     println!(
         "\n\nOversubscribed: blocking send/recv, {OVER_BATCH} elements, \
          {OVER_ITERS} iterations, median of {ROUNDS}.\nProducer counts are \
@@ -594,7 +610,9 @@ fn main() {
         }
         println!();
     }
+    } // end oversub
 
+    if want("external") {
     // -----------------------------------------------------------------------
     // External load. The section above oversubscribes with the channel's own
     // producers, which is the easy case to construct and the rarer one to meet.
@@ -670,4 +688,5 @@ fn main() {
          running alone.\n           Below 100% is the channel taking cores from \
          the rest of the process."
     );
+    } // end external
 }
