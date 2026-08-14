@@ -103,8 +103,11 @@ sessions on identical source.
 
 ## Not covered
 
-- **`Backoff` and `BackoffYield`** have no cell here. `Backoff` parks, so it may
-  share `park_block`'s exposure, though its 10 spins and 20 yields before the
-  first park may already absorb the effect. Untested.
+- ~~**`Backoff` and `BackoffYield`** have no cell here.~~ Added 2026-08-14
+  (`2026-08-14-backoff-cells.md`). The speculation below was right: `Backoff`
+  does **not** share `park_block`'s exposure. It reaches 38.4 Melem/s on the
+  blocking path against `BusySpin`'s 39.2 and `Park`'s 12.1, so the weakness
+  this document attributes to "the blocking path" is `Park`'s wake protocol
+  alone.
 - **Producer counts other than 2.**
 - **The park/unpark churn itself.** See above.
