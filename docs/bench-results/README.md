@@ -104,9 +104,15 @@ above, or a five-round confirmation.
 
 ## Practices that these findings produced
 
-- **Interleave by round**, never all runs of one variant then the other. Box
-  conditions drift over the tens of minutes a comparison takes, and a block
-  design lets that drift look like an effect.
+- **Pair the arms, do not just interleave them.** Measure A and B adjacently at
+  the same alignment in the same round and compare per-pair ratios. Drift and
+  layout then cancel inside the ratio instead of being averaged over, and both
+  arms see the same five layouts. This is what turned the pre-park spin from
+  "inconclusive" into "+65%, 20 of 20 pairs"
+  (`2026-08-13-park-prespin-gate.md`).
+- **Never compare against a baseline from another run.** `park_block` measured
+  11.02 in one session and 7.61 in another on identical source — a 45% gap, four
+  times its own within-session budget. A cross-run A/B cannot resolve anything.
 - **Judge box quietness with `vmstat`**, not load average. Load average has read
   above 2.0 on this machine while `vmstat` showed 90% idle.
 - **Build to completion before measuring.** Never let a build overlap a run.

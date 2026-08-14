@@ -91,12 +91,15 @@ That change lives in the Dekker wake protocol, which is loom-verified
 corners of this 2x2**, which is precisely what the backoff's original gate
 failed to do.
 
-**Follow-up (2026-08-12): the spin was implemented and did not pass.** Two of its
-three `park_block` runs fall inside the unmodified baseline's range, which was
-subsequently characterised over ten runs as 10.00–12.26
-(`2026-08-12-layout-sensitivity.md`). `park_block` turns out to be the noisiest
-cell in the suite, with a ~11% minimum detectable effect. The branch
-`feat/park-prespin` stays unmerged.
+**Follow-up (2026-08-13): the spin was implemented and it passes.** +65% on
+`park_block` over 20 paired samples, 20 of 20 favouring it, with a flat control
+(`2026-08-13-park-prespin-gate.md`). That more than recovers the 24% measured
+here, and supports — without directly counting — the park/unpark churn mechanism
+proposed below.
+
+An intermediate 2026-08-12 gate reported the opposite and was wrong: it compared
+against a baseline from a different run, and `park_block` drifts 45% between
+sessions on identical source.
 
 ## Not covered
 

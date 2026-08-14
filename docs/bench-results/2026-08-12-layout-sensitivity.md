@@ -76,6 +76,13 @@ measured per cell rather than guessed globally.
 
 ## Verdict on the pre-park spin
 
+> **Overturned 2026-08-13** (`2026-08-13-park-prespin-gate.md`). A paired gate —
+> both arms at the same alignment in the same round, 20 pairs — puts the change
+> at **+65% on `park_block`, 20 of 20 pairs**, with a flat control. The verdict
+> below is wrong because its baseline came from a *different run*, and
+> `park_block` drifts 45% between sessions on identical source. The two "inside
+> baseline" values were most likely the base binary; see that document.
+
 `park_block` baseline, ten runs across five alignments, no pre-park spin:
 
 ```
@@ -95,7 +102,7 @@ spin catches the publish and the consumer avoids the park/unpark cycle entirely
 for a long stretch. That is a hypothesis with one supporting observation, which
 is not enough to ship on, and not enough to dismiss either.
 
-**`feat/park-prespin` stays unmerged.**
+~~**`feat/park-prespin` stays unmerged.**~~ Superseded — see the note above.
 
 ## Recipe for a layout-robust comparison
 
