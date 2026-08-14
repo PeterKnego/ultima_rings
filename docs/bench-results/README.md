@@ -124,6 +124,11 @@ above, or a five-round confirmation.
   regression in `Park` mode (`2026-08-11-bakeoff-v3.md`).
 - **Report CPU alongside wall time** whenever a spinning config is compared to a
   parking one. `examples/cpu_cost.rs` does this; the criterion groups do not.
+  A throughput-only gate let the pre-park spin ship at a constant that raised
+  `Park`'s idle CPU 35% for no throughput gain
+  (`2026-08-14-park-spins-sweep.md`). Tuning a spin count against throughput
+  alone will always pick too large a number, because the cost lands somewhere
+  the benchmark is not looking.
 - **Vary the payload, not just the crate.** Switching `u64` to a 64-byte
   `String` moved competitors by between 1.6x and 15.8x and reversed one ranking
   outright. A roster measured at one payload is a roster measured at one point.
