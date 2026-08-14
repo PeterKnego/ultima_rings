@@ -191,6 +191,93 @@ criterion_group!(
 fn bakeoff_spsc(c: &mut Criterion) {
     let mut g = c.benchmark_group("bakeoff_spsc");
     g.throughput(Throughput::Elements(BATCH));
+
+    // TWO cells for this crate, for the same reason bakeoff_disruptor_mpsc has
+    // two, and the distinction is load-bearing:
+    //
+    //   ultima       — `try_recv()`, ONE element per call. This is the
+    //                  like-for-like cell. Every competitor below consumes one
+    //                  at a time (`rtrb::pop`, `crossbeam::try_recv`,
+    //                  `flume::try_recv`, `kanal::try_recv`), so this is the
+    //                  only ultima number that belongs beside them.
+    //   ultima_drain — `drain(usize::MAX, ..)`, the whole available run per
+    //                  call. Idiomatic for this crate and much faster, but it
+    //                  amortises the consumer's synchronisation over a batch
+    //                  while the competitors pay it per element.
+    //
+    // Until 2026-08-14 this group had NO cell for this crate at all, and the
+    // "ultima_rings SPSC" row in every bake-off up to v3 was taken from
+    // `spsc/busy_spin_pipelined` in a different group — which drains. So those
+    // tables compared a batched drain against single-item pops and the
+    // resulting ratios (17-19x crossbeam) were inflated by the harness, not
+    // earned. `ultima_drain` reproduces that old number; `ultima` is the one to
+    // quote.
+    g.bench_function("ultima", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (mut tx, mut rx) = spsc::channel::<u64>(1024, WaitStrategy::BusySpin);
+                let consumer = thread::spawn(move || {
+                    let mut got = 0u64;
+                    while got < BATCH {
+                        match rx.try_recv() {
+                            Ok(_) => got += 1,
+                            Err(TryRecvError::Empty) => std::hint::spin_loop(),
+                            Err(TryRecvError::Disconnected) => break,
+                        }
+                    }
+                });
+                let t = Instant::now();
+                for i in 0..BATCH {
+                    let mut v = i;
+                    loop {
+                        match tx.try_send(v) {
+                            Ok(()) => break,
+                            Err(TrySendError::Full(b)) => {
+                                v = b;
+                                std::hint::spin_loop();
+                            }
+                            Err(TrySendError::Disconnected(_)) => unreachable!(),
+                        }
+                    }
+                }
+                consumer.join().unwrap();
+                total += t.elapsed();
+            }
+            total
+        })
+    });
+    g.bench_function("ultima_drain", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (mut tx, mut rx) = spsc::channel::<u64>(1024, WaitStrategy::BusySpin);
+                let consumer = thread::spawn(move || {
+                    let mut got = 0u64;
+                    while got < BATCH {
+                        got += rx.drain(usize::MAX, |_| {}) as u64;
+                    }
+                });
+                let t = Instant::now();
+                for i in 0..BATCH {
+                    let mut v = i;
+                    loop {
+                        match tx.try_send(v) {
+                            Ok(()) => break,
+                            Err(TrySendError::Full(b)) => {
+                                v = b;
+                                std::hint::spin_loop();
+                            }
+                            Err(TrySendError::Disconnected(_)) => unreachable!(),
+                        }
+                    }
+                }
+                consumer.join().unwrap();
+                total += t.elapsed();
+            }
+            total
+        })
+    });
     g.bench_function("crossbeam", |b| {
         b.iter_custom(|iters| {
             let mut total = std::time::Duration::ZERO;
