@@ -1274,9 +1274,25 @@ fn bakeoff_mpsc_string(c: &mut Criterion) {
 fn backoff_isolation(c: &mut Criterion) {
     let mut g = c.benchmark_group("backoff_isolation");
     g.throughput(Throughput::Elements(BATCH));
+    // All four strategies x {poll, block}. The two self-waking ladders were
+    // missing until 2026-08-14, which left both the claim-CAS backoff and
+    // PARK_SPINS unmeasured against them.
+    //
+    // The `*_poll` cells for BusySpin, Backoff and BackoffYield should be
+    // IDENTICAL code paths: `try_send`/`try_recv` never consult the wait
+    // strategy, and these three are self-waking so the productive side pays
+    // nothing for them. They are kept as a standing consistency check — if
+    // those three diverge, the harness is measuring something other than what
+    // it claims. `park_poll` is the exception and is expected to differ,
+    // because `Park`'s `try_send` pays a SeqCst fence plus a consumer wake on
+    // every publish whichever API the caller used (design.md §8).
     for (name, strategy, blocking) in [
         ("busyspin_poll", WaitStrategy::BusySpin, false),
         ("busyspin_block", WaitStrategy::BusySpin, true),
+        ("backoff_poll", WaitStrategy::Backoff, false),
+        ("backoff_block", WaitStrategy::Backoff, true),
+        ("backoffyield_poll", WaitStrategy::BackoffYield, false),
+        ("backoffyield_block", WaitStrategy::BackoffYield, true),
         ("park_poll", WaitStrategy::Park, false),
         ("park_block", WaitStrategy::Park, true),
     ] {
