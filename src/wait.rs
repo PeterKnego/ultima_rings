@@ -2,6 +2,24 @@
 //! the productive side pays nothing for them; `Park` blocks via the notify
 //! layer (`crate::notify`) and needs the Dekker wake protocol.
 //!
+//! **If you want a blocking API and care about throughput, choose `Backoff`,
+//! not `Park`.** Measured 2 producers into cap 1024 on a 4-core VM
+//! (`2026-08-14-backoff-cells.md`), Melem/s:
+//!
+//! | strategy | `try_*` | `send`/`recv` |
+//! |---|---:|---:|
+//! | `BusySpin` | 45.2 | 39.2 |
+//! | `BackoffYield` | 45.1 | 39.8 |
+//! | `Backoff` | 44.5 | 38.4 |
+//! | `Park` | 10.9 | 12.1 |
+//!
+//! `Backoff` blocks — its ladder climbs to timed parks — and lands within 3.5%
+//! of `BusySpin`. `Park` is 3.2x below every other strategy, because it makes
+//! each *publish* pay a `SeqCst` fence plus a consumer wake (§8 of design.md).
+//! That cost falls on the producer, which is why `Park`'s `try_*` column is no
+//! better than its blocking one. `Park` earns its place on wake latency (~10 µs
+//! against `Backoff`'s ~64 µs floor) and idle CPU, not on throughput.
+//!
 //! Ordered by wake granularity, measured on a 4-core Linux VM:
 //! `BusySpin` (~27 ns) → `BackoffYield` (~0.7 µs) → `Park` (~10 µs, costs the
 //! peer a fence + wake) → `Backoff` (~64 µs floor, costs the peer nothing).

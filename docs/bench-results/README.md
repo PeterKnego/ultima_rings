@@ -117,7 +117,15 @@ above, or a five-round confirmation.
   above 2.0 on this machine while `vmstat` showed 90% idle.
 - **Build to completion before measuring.** Never let a build overlap a run.
 - **Include a control cell** that calls no function the change touches. A cell
-  whose branch is merely not taken is not a control — see §1.
+  whose branch is merely not taken is not a control — see §1. Note the limit:
+  such a control rules out *behavioural* coupling, not *layout* coupling, because
+  both modules compile into one binary and changing one shifts where the other
+  lands (`2026-08-14-backoff-cells.md` §4). A control immune to layout would have
+  to live in a separate binary.
+- **Prefer several cells that should agree over one that should not move.**
+  `backoff_isolation`'s three self-waking `*_poll` cells are identical code paths
+  and sit within 1.6% of each other; if they ever diverge the harness is broken.
+  That catches more than a single control does.
 - **Gate across the axis the change acts on.** The CAS backoff's gate covered
   three configurations that varied capacity and producer count while holding the
   wait strategy fixed. It was thorough on the wrong axis and missed a 24%
