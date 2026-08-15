@@ -109,9 +109,10 @@ if [ "${SKIP_BAKEOFF:-0}" != "1" ]; then
     echo "=== bakeoff $label (cpus=$cpus) ==="
     {
       echo "=== bakeoff $label ==="
-      for r in 1 2 3; do
-        taskset -c "$cpus" cargo bench --bench throughput -- \
-          'bakeoff_mpsc/|bakeoff_mpsc_string/|bakeoff_park_mpsc/' 2>&1 \
+      for r in $(seq 1 "${BAKEOFF_ROUNDS:-3}"); do
+        echo "### round=$r point=$label"
+        taskset -c "$cpus" cargo bench --features experimental-sharded \
+          --bench throughput -- "${BAKEOFF_FILTER:-^bakeoff_}" 2>&1 \
           | grep -E '^bakeoff|thrpt:  \[[0-9]'
       done
     } | tee "$OUT/bakeoff.${label}.txt"
