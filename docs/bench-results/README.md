@@ -6,6 +6,19 @@ instead come from the 16-core rig in `bench-infra/`; each states its host. Four
 things, all discovered the hard way, determine how much any number in this
 directory can carry.
 
+**Thread placement is a first-order variable and this harness did not control it
+until 2026-08-15.** Moving two threads from one physical core to two costs 1.41x
+(rtrb), 1.88x (this crate) and 5.53x (crossbeam) — and it *inverts* the ordering:
+this crate leads rtrb 1.16x when threads share a core and trails 0.87x when they
+do not (`2026-08-15-thread-placement.md`). These benchmarks are handoff-bound, so
+extra cores add no parallelism and only lengthen the path a cache line travels.
+
+Consequences: **competitor ratios are the least trustworthy numbers here**, every
+figure recorded before 2026-08-15 has placement uncontrolled inside it, and a
+ratio needs a placement as well as a machine and a core count. Comparisons of
+this crate against *itself* are much safer, because an A/B holds placement
+roughly constant between the arms.
+
 **Quote no ratio without both a machine and a core count.** The MPSC lead over
 crossbeam measures 1.88x on the 4-vCPU VM, a tie at the same topology on a Xeon,
 and 1.25x at 16 cores (`2026-08-15-bakeoff-rig.md`). Parity with rtrb, reported
@@ -208,7 +221,7 @@ tie rather than a ranking.
 |---|---|---|
 | `Park` anything | the 4-vCPU VM | `park_block` MDE ~11% there, 25-53% on the rig |
 | spin-path A/Bs | the rig | 2-3% MDE against the VM's ~6% |
-| any competitor ratio | **both** | they disagree at matched topology; one machine is not a result |
+| any competitor ratio | **both**, and pin | they disagree at matched topology, and placement alone spans the whole disagreement |
 
 `bench-infra/` provisions the rig; `make sweep` and `make layout` are the entry
 points. Always `make destroy`.

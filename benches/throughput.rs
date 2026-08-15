@@ -188,6 +188,194 @@ criterion_group!(
 // uc2-shaped workloads (see task-9 report for the verdict).
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Thread placement.
+//
+// Every MPSC/SPSC cell in this file is HANDOFF-bound, not compute-bound: the
+// thread count is fixed (2-3) regardless of how many cores exist, so extra
+// cores add no parallelism and only lengthen the path a cache line travels
+// between producer and consumer.
+//
+// That makes placement a first-order variable which this harness did not
+// control until 2026-08-15. Measured at a constant 4 CPUs, packing the threads
+// onto 2 physical cores instead of spreading them over 4 was worth 1.10x to
+// 2.86x depending on the crate (docs/bench-results/2026-08-15-thread-placement.md).
+// Crates differ in how much they gain, so the *ratios between them* move with
+// placement even though nothing about either implementation changed.
+//
+// `pin(cpu)` is a no-op when the CPU does not exist, so a cell that asks for a
+// core this box lacks degrades to "unpinned" rather than silently measuring
+// something else. Bench-only: `core_affinity` is a dev-dependency and never
+// appears in [dependencies].
+/// Pins the CALLING thread to `cpu`, returning whether it succeeded.
+///
+/// Two traps, both of which produced a wrong measurement before they were
+/// understood:
+///
+/// 1. `core_affinity::get_core_ids()` reports the caller's *current affinity
+///    mask*, not the machine. Pin a thread to CPU 0 and every thread it later
+///    spawns inherits a mask containing only CPU 0, cannot see any other core,
+///    and silently fails to pin. So the criterion main thread must NEVER be
+///    pinned — cells run sequentially in one process and the mask would leak
+///    into every subsequent cell. Placement cells therefore spawn *both* sides
+///    and leave main unpinned.
+/// 2. A failed pin is invisible unless it is checked. The original version
+///    ignored the result and reported two threads sharing one CPU as though it
+///    had measured two placements; every cell came out identical because every
+///    cell was in fact the same one.
+///
+/// Callers assert on the return value rather than trusting it.
+fn pin(cpu: usize) -> bool {
+    match core_affinity::get_core_ids() {
+        Some(ids) => match ids.into_iter().find(|c| c.id == cpu) {
+            Some(id) => core_affinity::set_for_current(id),
+            None => false,
+        },
+        None => false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SPSC placement: the same two threads, either sharing a physical core or not.
+//
+// On the reference VM CPUs 0 and 1 are SMT siblings of core 0 and therefore
+// share L1d and L2; CPUs 0 and 2 are different physical cores and share only
+// L3. So `siblings` keeps every handoff inside L2 and `cross_core` forces it
+// out to L3, with thread count, CPU count and code all held constant. It is the
+// cleanest available isolation of handoff distance.
+//
+// Read the RATIO between the two placements, never the absolute values: this
+// group pins to specific CPU numbers and is meaningless on a box whose topology
+// differs. Check `lscpu -e` before quoting it anywhere.
+// ---------------------------------------------------------------------------
+
+fn spsc_placement(c: &mut Criterion) {
+    let mut g = c.benchmark_group("spsc_placement");
+    g.throughput(Throughput::Elements(BATCH));
+
+    // Both sides are spawned and main only waits — see `pin` for why main must
+    // stay unpinned. The barrier keeps the pin out of the timed region.
+    macro_rules! placement_cell {
+        ($name:expr, $tx_cpu:expr, $rx_cpu:expr, $mk:expr, $send:expr, $recv:expr) => {
+            g.bench_function($name, |b| {
+                b.iter_custom(|iters| {
+                    let mut total = std::time::Duration::ZERO;
+                    for _ in 0..iters {
+                        let (tx, rx) = $mk;
+                        let barrier = Arc::new(Barrier::new(3));
+                        let (bt, br) = (Arc::clone(&barrier), Arc::clone(&barrier));
+                        let producer = thread::spawn(move || {
+                            let c = $tx_cpu;
+                            assert!(pin(c), "producer could not pin to cpu {c}");
+                            let mut tx = tx;
+                            bt.wait();
+                            $send(&mut tx);
+                        });
+                        let consumer = thread::spawn(move || {
+                            let c = $rx_cpu;
+                            assert!(pin(c), "consumer could not pin to cpu {c}");
+                            let mut rx = rx;
+                            br.wait();
+                            $recv(&mut rx);
+                        });
+                        barrier.wait();
+                        let t = Instant::now();
+                        producer.join().unwrap();
+                        consumer.join().unwrap();
+                        total += t.elapsed();
+                    }
+                    total
+                })
+            });
+        };
+    }
+
+    for (place, tx_cpu, rx_cpu) in [("siblings", 0usize, 1usize), ("cross_core", 0usize, 2usize)] {
+        placement_cell!(
+            format!("ultima_{place}"),
+            tx_cpu,
+            rx_cpu,
+            spsc::channel::<u64>(1024, WaitStrategy::BusySpin),
+            |tx: &mut spsc::Sender<u64>| {
+                for i in 0..BATCH {
+                    let mut v = i;
+                    loop {
+                        match tx.try_send(v) {
+                            Ok(()) => break,
+                            Err(TrySendError::Full(b)) => {
+                                v = b;
+                                std::hint::spin_loop();
+                            }
+                            Err(TrySendError::Disconnected(_)) => return,
+                        }
+                    }
+                }
+            },
+            |rx: &mut spsc::Receiver<u64>| {
+                let mut got = 0u64;
+                while got < BATCH {
+                    match rx.try_recv() {
+                        Ok(_) => got += 1,
+                        Err(TryRecvError::Empty) => std::hint::spin_loop(),
+                        Err(TryRecvError::Disconnected) => break,
+                    }
+                }
+            }
+        );
+        placement_cell!(
+            format!("rtrb_{place}"),
+            tx_cpu,
+            rx_cpu,
+            rtrb::RingBuffer::<u64>::new(1024),
+            |tx: &mut rtrb::Producer<u64>| {
+                for i in 0..BATCH {
+                    let mut v = i;
+                    while let Err(rtrb::PushError::Full(b)) = tx.push(v) {
+                        v = b;
+                        std::hint::spin_loop();
+                    }
+                }
+            },
+            |rx: &mut rtrb::Consumer<u64>| {
+                let mut got = 0u64;
+                while got < BATCH {
+                    if rx.pop().is_ok() {
+                        got += 1;
+                    } else {
+                        std::hint::spin_loop();
+                    }
+                }
+            }
+        );
+        placement_cell!(
+            format!("crossbeam_{place}"),
+            tx_cpu,
+            rx_cpu,
+            crossbeam_channel::bounded::<u64>(1024),
+            |tx: &mut crossbeam_channel::Sender<u64>| {
+                for i in 0..BATCH {
+                    let mut v = i;
+                    while let Err(crossbeam_channel::TrySendError::Full(b)) = tx.try_send(v) {
+                        v = b;
+                        std::hint::spin_loop();
+                    }
+                }
+            },
+            |rx: &mut crossbeam_channel::Receiver<u64>| {
+                let mut got = 0u64;
+                while got < BATCH {
+                    if rx.try_recv().is_ok() {
+                        got += 1;
+                    } else {
+                        std::hint::spin_loop();
+                    }
+                }
+            }
+        );
+    }
+    g.finish();
+}
+
 fn bakeoff_spsc(c: &mut Criterion) {
     let mut g = c.benchmark_group("bakeoff_spsc");
     g.throughput(Throughput::Elements(BATCH));
@@ -1567,6 +1755,7 @@ fn mpsc_layout_probe(c: &mut Criterion) {
 criterion_group!(
     bakeoff,
     bakeoff_spsc,
+    spsc_placement,
     bakeoff_mpsc,
     bakeoff_mpsc_string,
     bakeoff_park_mpsc,
