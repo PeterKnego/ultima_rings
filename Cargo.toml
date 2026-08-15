@@ -10,6 +10,7 @@ repository = "https://github.com/pknego/ultima_rings"
 [dependencies]
 
 [dev-dependencies]
+core_affinity = "0.8.3"
 criterion = "0.5"
 crossbeam-channel = "0.5"
 disruptor = "4.4"

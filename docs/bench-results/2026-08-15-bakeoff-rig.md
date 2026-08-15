@@ -27,7 +27,15 @@ Ties are comparisons whose ranges overlap.
 
 ---
 
-## 1. Parity with rtrb was a property of the VM
+## 1. Parity with rtrb was a property of the VM — and of thread placement
+
+> **Revised the same day.** `2026-08-15-thread-placement.md` shows that moving
+> two threads from one physical core to two flips this comparison on a single
+> machine: this crate leads rtrb 1.16x when they share a core and trails 0.87x
+> when they do not. Placement alone spans the range this section attributes to
+> the machine. The measurements below stand; the explanation is at best half of
+> the story.
+
 
 Five sessions have measured this crate's SPSC against rtrb and reported 0.99x,
 0.86x, 0.91x, and — on a like-for-like cell at last — 1.03x. The standing summary

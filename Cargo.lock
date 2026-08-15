@@ -852,6 +852,7 @@ dependencies = [
 name = "ultima_rings"
 version = "0.1.0"
 dependencies = [
+ "core_affinity",
  "criterion",
  "crossbeam-channel",
  "disruptor",
