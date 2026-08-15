@@ -6,6 +6,12 @@ instead come from the 16-core rig in `bench-infra/`; each states its host. Four
 things, all discovered the hard way, determine how much any number in this
 directory can carry.
 
+**Quote no ratio without both a machine and a core count.** The MPSC lead over
+crossbeam measures 1.88x on the 4-vCPU VM, a tie at the same topology on a Xeon,
+and 1.25x at 16 cores (`2026-08-15-bakeoff-rig.md`). Parity with rtrb, reported
+across five sessions, turned out to be a property of the VM — on the Xeon this
+crate leads rtrb 1.67-1.80x at both topologies.
+
 **Before quoting any wait-strategy number, check the core count it was taken on**
 (`2026-08-12-topology-sweep.md`). `BackoffYield`'s lead over `BusySpin` under
 oversubscription is 12.3x on 2 cores and 1.2x on 16 — the same effect, measured
@@ -195,6 +201,17 @@ Competitor gaps are usually large (this crate against flume is 10x, against
 crossbeam 1.3x), so most roster comparisons clear the budgets in §1 easily. The
 budget matters when a competitor lands within a few percent — report that as a
 tie rather than a ranking.
+
+## Two machines, and which to use for what
+
+| question | machine | why |
+|---|---|---|
+| `Park` anything | the 4-vCPU VM | `park_block` MDE ~11% there, 25-53% on the rig |
+| spin-path A/Bs | the rig | 2-3% MDE against the VM's ~6% |
+| any competitor ratio | **both** | they disagree at matched topology; one machine is not a result |
+
+`bench-infra/` provisions the rig; `make sweep` and `make layout` are the entry
+points. Always `make destroy`.
 
 ## Report ties as ties
 
