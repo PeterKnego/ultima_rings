@@ -1,6 +1,9 @@
-//! **Experimental.** Sharded MPSC: one SPSC ring per producer, consumer
-//! round-robins. Gated behind the `experimental-sharded` feature; not part of
-//! the stable API.
+//! Sharded MPSC: one SPSC ring per producer, consumer round-robins. The
+//! producer set is **fixed at construction** — that is the stable contract of
+//! this type, not a missing feature (see below). Reach for it when the
+//! producer threads are known up front and per-producer FIFO is enough;
+//! reach for [`crate::mpsc`] when producers come and go, `Sender: Clone` is
+//! needed, or consumers rely on one global order.
 //!
 //! Each producer owns a private [`crate::spsc`] ring, so a send is a single
 //! Release store with no CAS and no cross-producer contention — unlike

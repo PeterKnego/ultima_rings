@@ -16,19 +16,16 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
-      - run: cargo clippy --all-features --all-targets -- -D warnings
-      - run: cargo test --all-features
 
   test-arm:
     # Weak-memory hardware lane: same tests on aarch64, where a missing or
-    # too-weak ordering shows up that x86's stronger model hides. Both feature
-    # configurations run here — `sharded` composes `spsc`'s Release/Acquire
-    # edges, so this is the lane most likely to catch a problem with it.
+    # too-weak ordering shows up that x86's stronger model hides. `sharded`
+    # composes `spsc`'s Release/Acquire edges, so this is the lane most
+    # likely to catch a problem with it.
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
       - run: cargo test
-      - run: cargo test --all-features
 
   loom:
     runs-on: ubuntu-latest
@@ -42,4 +39,3 @@ jobs:
       - uses: actions/checkout@v4
       - run: rustup toolchain install nightly --component miri
       - run: cargo +nightly miri test
-      - run: cargo +nightly miri test --all-features

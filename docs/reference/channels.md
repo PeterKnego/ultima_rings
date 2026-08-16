@@ -5,7 +5,7 @@ API reference is the rustdoc: `cargo doc --open`.
 
 ## The three flavors
 
-| | `spsc` | `mpsc` | `sharded` (experimental) |
+| | `spsc` | `mpsc` | `sharded` |
 |---|---|---|---|
 | Constructor | `spsc::channel(cap, strategy)` | `mpsc::channel(cap, strategy)` | `sharded::channel(n_shards, total_cap, strategy)` |
 | Producers | exactly 1 | N (`Sender: Clone`) | exactly `n_shards`, fixed at construction (`Sender` is not `Clone`) |
@@ -15,12 +15,16 @@ API reference is the rustdoc: `cargo doc --open`.
 | Blocking `send` / `recv` | yes | yes | yes — `send` blocks on **this shard's** capacity; `recv` waits self-waking |
 | `drain` | yes | yes | yes — each shard visited at most once per call, head published once per shard |
 | Wait strategies | all four | all four | all but `Park` (panics: no cross-shard parker) |
-| Availability | always | always | feature `experimental-sharded` |
+| Availability | always | always | always |
 
-`sharded` is a prototype and not a stable API (see the feature-flag note in
-`Cargo.toml`). It takes every wait strategy except `Park`: the self-waking
-three compose over independent rings for free, while `Park` would need a
-cross-shard parker that puts a fence + wake on every send.
+`sharded`'s **fixed producer set is its stable contract**: `Sender` is not
+`Clone`, and the shard count is set at construction. One writer per ring is
+the entire source of its speed (no CAS, no retry, no contended line), so
+dynamic producers are out of scope by design, not pending work — callers who
+need `Sender: Clone` or global FIFO want `mpsc`. It takes every wait strategy
+except `Park`: the self-waking three compose over independent rings for free,
+while `Park` would need a cross-shard parker that puts a fence + wake on
+every send.
 
 ## Capacity rules
 

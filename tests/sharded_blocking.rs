@@ -2,7 +2,7 @@
 //! `tests/mpsc_blocking.rs`, minus the `Park` cases (sharded rejects `Park`:
 //! there is no cross-shard parker) and with the weaker ordering contract this
 //! type promises: per-producer FIFO, not global FIFO.
-#![cfg(all(not(loom), feature = "experimental-sharded"))]
+#![cfg(not(loom))]
 
 use std::thread;
 use ultima_rings::{RecvError, SendError, WaitStrategy, sharded};

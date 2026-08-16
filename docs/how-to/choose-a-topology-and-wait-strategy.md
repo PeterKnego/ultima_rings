@@ -9,6 +9,15 @@ a new channel and re-plumbing its handles. Decide them together.
   path in the crate and pays no CAS at all.
 - If several threads produce into one consumer, use `mpsc::channel` and
   clone the `Sender` once per producer.
+- If the producer threads are **known up front** and you only need each
+  producer's own values in order — worker pool into an aggregator, pinned
+  per-core collectors — use `sharded::channel`. It trades three things
+  `mpsc` gives you (global FIFO, one global capacity bound, `Sender: Clone`)
+  for the removal of all cross-producer contention, and the trade grows with
+  producer count: 6× `mpsc` at 2 producers on 16 cores, more past that
+  ([`2026-08-16-sharded-ladder-skew.md`](../bench-results/2026-08-16-sharded-ladder-skew.md)).
+  Its consumer benefits from `drain` far more than the other flavors'
+  ([`2026-08-16-sharded-string-drain.md`](../bench-results/2026-08-16-sharded-string-drain.md)).
 - Do not funnel multiple producers through one `spsc::Sender` behind a
   mutex — the lock reintroduces exactly the cost the crate exists to remove.
   If you need more producers later, switch to `mpsc`.

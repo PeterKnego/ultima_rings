@@ -922,14 +922,13 @@ fn bakeoff_mpsc(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
-// Sharded MPSC prototype (feature `experimental-sharded`). Same harness shape,
+// Sharded MPSC. Same harness shape,
 // BATCH, and total buffered capacity as `bakeoff_mpsc` above, so the two are
 // directly comparable: 2 shards x 512 = 1024 slots, matching
 // crossbeam_channel::bounded(1024). See
 // docs/superpowers/specs/2026-08-07-sharded-mpsc-design.md.
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "experimental-sharded")]
 fn bakeoff_sharded_mpsc(c: &mut Criterion) {
     use ultima_rings::sharded;
     let mut g = c.benchmark_group("bakeoff_sharded_mpsc");
@@ -1054,7 +1053,6 @@ fn bakeoff_sharded_mpsc(c: &mut Criterion) {
 // counts within this one.
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "experimental-sharded")]
 fn sharded_shard_ladder(c: &mut Criterion) {
     use ultima_rings::sharded;
     let mut g = c.benchmark_group("sharded_shard_ladder");
@@ -1135,7 +1133,6 @@ fn sharded_shard_ladder(c: &mut Criterion) {
 //   contract costs a skewed workload at a fixed memory budget.
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "experimental-sharded")]
 fn sharded_skew(c: &mut Criterion) {
     use ultima_rings::sharded;
     let mut g = c.benchmark_group("sharded_skew");
@@ -1207,7 +1204,6 @@ fn sharded_skew(c: &mut Criterion) {
 // u64 cell so far measured a path whose `Slot::drop` does nothing.
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "experimental-sharded")]
 fn bakeoff_sharded_string(c: &mut Criterion) {
     use ultima_rings::sharded;
     let mut g = c.benchmark_group("bakeoff_sharded_string");
@@ -2043,7 +2039,6 @@ criterion_group!(
     backoff_isolation
 );
 
-#[cfg(feature = "experimental-sharded")]
 criterion_group!(
     bakeoff_sharded,
     bakeoff_sharded_mpsc,
@@ -2052,8 +2047,4 @@ criterion_group!(
     sharded_skew
 );
 
-#[cfg(feature = "experimental-sharded")]
 criterion_main!(benches, bakeoff, bakeoff_sharded);
-
-#[cfg(not(feature = "experimental-sharded"))]
-criterion_main!(benches, bakeoff);

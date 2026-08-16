@@ -2,7 +2,7 @@
 //! drop accounting. Mirrors `tests/mpsc_stress.rs`, but asserts the weaker
 //! ordering contract this type actually promises: per-producer FIFO, NOT the
 //! global FIFO `mpsc` provides.
-#![cfg(all(not(loom), feature = "experimental-sharded"))]
+#![cfg(not(loom))]
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};

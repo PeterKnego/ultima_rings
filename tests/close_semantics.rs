@@ -83,7 +83,6 @@ fn last_sender_drop_from_thread_wakes_parked_receiver() {
 /// apply. Global-FIFO cases don't (sharded promises per-producer FIFO only),
 /// and Park cases don't (sharded is BusySpin-only); the disconnect and drop
 /// accounting contracts are identical and are what this module checks.
-#[cfg(feature = "experimental-sharded")]
 mod sharded {
     use super::*;
     use ultima_rings::sharded;

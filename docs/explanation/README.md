@@ -6,7 +6,7 @@ mid-task lookup.
 The cornerstone is the [design document](../design.md): the invariant,
 memory ordering, and justification for every atomic operation in the crate,
 the wake protocol, disconnect semantics, the alternatives that were weighed
-(including the sharded prototype), and a soundness-pitfall checklist mapping
+(including the sharded flavor), and a soundness-pitfall checklist mapping
 other channel crates' historical bugs to this crate's mitigations.
 
 Alongside it:

@@ -1,6 +1,6 @@
 [package]
 name = "ultima_rings"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "Apache-2.0"
 authors = ["Peter Knego <peter@knego.net>"]
@@ -18,11 +18,6 @@ flume = "0.11"
 kanal = "0.1"
 rtrb = "0.3"
 thingbuf = "0.1.6"
-
-[features]
-# Experimental sharded MPSC prototype (N x SPSC + round-robin consumer).
-# Default off: not part of the stable API. Takes every wait strategy but Park.
-experimental-sharded = []
 
 [target.'cfg(loom)'.dependencies]
 loom = "0.7"

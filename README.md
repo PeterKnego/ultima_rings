@@ -138,7 +138,7 @@ Median of five rounds, range alongside:
 | SPSC | crossbeam-channel | 8.07 | 7.31 – 8.87 | 1.00× |
 | SPSC | flume | 5.45 | 5.05 – 9.75 | 0.68× ⚠ |
 | SPSC | kanal | 1.02 | 0.96 – 1.14 | 0.13× |
-| MPSC (2 producers) | **ultima_rings `sharded`** (experimental) | **78.4** | 74.7 – 80.5 | 3.17× |
+| MPSC (2 producers) | **ultima_rings `sharded`** | **78.4** | 74.7 – 80.5 | 3.17× |
 | MPSC (2 producers) | **ultima_rings `BusySpin`** | **46.5** | 41.7 – 53.0 | **1.88×** |
 | MPSC (2 producers) | crossbeam-channel | 24.7 | 22.3 – 30.1 | 1.00× |
 | MPSC (2 producers) | flume | 7.34 | 7.22 – 7.87 | 0.30× |
@@ -197,10 +197,15 @@ What the program supports, each claim with its conditions:
 - **The `String`-payload cells against `thingbuf`'s reference API support no
   direction.** Three configurations produced three answers — 1.82× behind, tied, and
   2.05–2.35× ahead — so this README quotes none.
-- **The sharded prototype scales** — 1.68× the production `mpsc` on the dev box,
-  5.71–6.20× on the Xeon, where the shared claim cursor it deletes is the bottleneck.
-  It is feature-gated, takes every wait strategy but `Park`, and gives up global FIFO
-  and a global capacity bound; a direction, not a shipping path.
+- **`sharded` scales, and shipped on the strength of it** — 1.68× the shared-claim
+  `mpsc` on the dev box, 5.71–6.20× on the Xeon at 2 producers, and the gap *widens*
+  with producer count: at 16 producers on 16 cores it holds 118 Melem/s while `mpsc`
+  collapses below 8
+  ([`2026-08-16-sharded-ladder-skew.md`](docs/bench-results/2026-08-16-sharded-ladder-skew.md)).
+  Its contract is the trade: a fixed producer set (`Sender` is not `Clone`),
+  per-producer FIFO only, and a per-shard capacity bound. Takes every wait strategy
+  but `Park`. With a batched `drain` consumer it reached 776 Melem/s
+  ([`2026-08-16-sharded-string-drain.md`](docs/bench-results/2026-08-16-sharded-string-drain.md)).
 
 Two findings behind the MPSC row are kept here because earlier revisions of this README
 claimed otherwise:

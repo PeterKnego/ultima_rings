@@ -126,7 +126,6 @@ fn loom_full_parked_sender_vs_recv_and_rx_drop() {
 // no dead-shard bookkeeping, on the argument that a shard's Disconnected
 // state is stable. These models check that composition-level claim under all
 // interleavings of send, drop, and sweep.
-#[cfg(feature = "experimental-sharded")]
 mod sharded_composition {
     use loom::thread;
     use ultima_rings::{TryRecvError, TrySendError, WaitStrategy, sharded};

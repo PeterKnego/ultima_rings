@@ -45,7 +45,7 @@ cursor publication — not as a default speedup.
 
 ## Sharded: one visit per shard per call
 
-`sharded::Receiver::drain` (feature `experimental-sharded`) sweeps the shards
+`sharded::Receiver::drain` sweeps the shards
 from the current cursor, visiting each **at most once per call**, so a single
 call stays finite even while producers keep refilling — loop the call for a
 continuous drain. If `max` runs out mid-shard the cursor holds there, and the

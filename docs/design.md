@@ -841,9 +841,10 @@ unexplained, not merely unaddressed.
 #### Sharded SPSC: one private ring for each producer
 
 This is the most structurally obvious alternative to a shared-claim MPSC. It
-is also the only entry in this section with a real build and real
-measurements, not only an argument. It lives behind the `experimental-sharded`
-feature in `src/sharded.rs`, with results in
+is also the only entry in this section that graduated into the crate: it
+began as a gated prototype, and after the 2026-08-16 ladder, skew, String,
+and drain measurements it shipped as `src/sharded.rs` with the fixed producer
+set as its stable contract. First-build results in
 `docs/bench-results/2026-08-07-sharded-mpsc.md`. Instead of many producers
 that contend for one ring, each producer owns a private `src/spsc.rs` ring,
 and the single consumer sweeps the rings with a sticky cursor.
@@ -885,9 +886,10 @@ not `Clone`, and construction fixes the shard set. Support for dynamic
 producers would need a shard for each clone, with the registry, lifecycle, and
 reaper work that implies. Or it would forfeit the result.
 
-No one plans that work: the intended workload fixes its producer set at
-startup. So the measured figures describe the type as it exists. They do not
-bound a future version.
+That precondition is now the shipped contract, not a deferral: the intended
+workload fixes its producer set at startup, and `sharded` stabilized on
+exactly that shape (2026-08-16). Dynamic producers are out of scope by
+design; a caller who needs them wants `mpsc`.
 
 #### Vyukov per-slot stamps and packed state words
 

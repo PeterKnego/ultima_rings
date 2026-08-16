@@ -38,6 +38,17 @@ If bursts routinely fill the ring but the consumer keeps up on average, the
 capacity is your lever: build the channel with a larger power-of-two `cap`.
 Capacity is fixed at construction — there is no runtime resize.
 
+## Sharded: `Full` is per-shard, not per-channel
+
+On `sharded::channel(n, total)`, a producer sees `Full` at `total / n`
+outstanding items **of its own**, even while every other shard sits empty —
+backpressure is a producer-local property there, by design. Size `total` so
+that `total / n` covers one producer's worst burst, not the sum of all
+bursts. The consolation is measured: shrinking a hot shard 8× (512 → 64
+slots) cost nothing while the consumer kept up
+([`2026-08-16-sharded-ladder-skew.md`](../bench-results/2026-08-16-sharded-ladder-skew.md)),
+so per-shard capacity buys burst absorption, not steady-state throughput.
+
 If none of these fit — the producer can't block, can't shed, and can't
 buffer enough — the consumer is genuinely too slow, and no channel policy
 fixes that; profile the consumer instead.
