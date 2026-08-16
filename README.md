@@ -13,6 +13,34 @@ hardened into a standalone crate: generic payloads, blocking and non-blocking AP
 core. See [`docs/design.md`](docs/design.md) for the full memory-ordering argument behind
 every atomic in the crate.
 
+## When to reach for this crate
+
+A bounded ring channel is the right tool when three properties matter at once:
+
+- **Fixed capacity, pre-allocated.** No allocation on the hot path; a slow consumer
+  produces backpressure (`Full`) rather than unbounded memory growth.
+- **No lock, even uncontended.** A handoff is a slot write plus a couple of atomic
+  operations — the like-for-like SPSC bake-off below measures 334 Melem/s against
+  `crossbeam-channel`'s 8.1 in the same session on the same box, a 41.4× ratio on a day
+  crossbeam's cell read unusually low. Across four bake-offs on that box the
+  same-session ratio has ranged 13.0×–41.4×, with crossbeam's cell owning the spread —
+  so the claim this README stands behind is *at least 13×, on that box* (conditions in
+  *Measured numbers* below).
+- **A topology you can commit to at construction.** Exactly one consumer, and either one
+  producer (SPSC — no CAS at all) or N producers (MPSC — one claim CAS on the producer
+  side, retried only under contention; the consumer never CASes). Deleting the general
+  case is where the speed comes from.
+
+That combination is the standard seam in pipeline-stage architectures — trading systems,
+audio, logging, thread-per-core services — wherever one thread's output is another's
+input and the handoff is on the latency budget. `ultima_rings` was built for exactly
+such a spot: a latency-critical state-machine-replication hot path (see
+[`docs/design.md`](docs/design.md) §9), where even an uncontended mutex is too much and
+the tail latency of a contended one is disqualifying. If you instead need multiple
+receivers, an unbounded queue, or arbitrary capacities, reach for `crossbeam-channel`
+or `flume` — the generality you'd be paying for here is generality this crate
+deliberately does not have.
+
 ## API
 
 ```rust
@@ -45,7 +73,7 @@ producer-on-full):
 returns immediately with nothing else runnable. It buys prompt preemption under
 contention, not idle CPU; reach for `Backoff` or `Park` if CPU is the concern. The
 `Backoff` park floor is 64 µs because `thread::park_timeout` cannot deliver sub-floor
-sleeps: a 1 µs request measured ~60 µs on a 4-core Linux VM, so finer rungs would be
+sleeps: a 1 µs request measured ~60 µs on a 4-vCPU Linux VM, so finer rungs would be
 fiction (see `src/wait.rs`'s `PARK_MIN`).
 
 ## Measured numbers
@@ -70,88 +98,134 @@ is unchanged between the bench cell and this crate, so these numbers are directi
 representative of what this crate's cores can do, but they are not this crate's own
 certified AWS measurement — that re-run has not happened yet.
 
-### This crate's own bake-off (criterion, single 4-core dev box)
+### This crate's own bake-off (criterion, two machines)
 
-`cargo bench` (see `benches/throughput.rs`, full results in [`docs/bench-results/2026-08-09-bakeoff-v2.md`](docs/bench-results/2026-08-09-bakeoff-v2.md))
-measures `ultima_rings` throughput head-to-head against `crossbeam-channel`, `flume`,
-`kanal`, and (SPSC-only) `rtrb`. Median of three runs in one session, range alongside:
+`cargo bench` (see `benches/throughput.rs`) measures `ultima_rings` head-to-head against
+`crossbeam-channel`, `flume`, `kanal`, `thingbuf`, `disruptor` †, and (SPSC-only) `rtrb`.
+It has run on two machines — the dev box (4 vCPUs on 2 physical cores; every session
+before 2026-08-14 believed it was 4 real cores) and a 16-core Xeon rig — plus a
+placement-pinned cell on the dev box. The one-sentence summary of that program:
+**a competitor ratio means nothing without a machine, a core count, and a thread
+placement attached** — moving two threads from SMT siblings to separate physical cores
+changes crossbeam's throughput 5.53× with no code change at all
+([`docs/bench-results/2026-08-15-thread-placement.md`](docs/bench-results/2026-08-15-thread-placement.md)).
+
+The most recent full bake-off on the dev box
+([`docs/bench-results/2026-08-14-bakeoff-v4.md`](docs/bench-results/2026-08-14-bakeoff-v4.md))
+is the first with a like-for-like SPSC cell — single-item `try_recv`, matching the
+competitors' single-pop APIs, where the 480–620 Melem/s figures of earlier sessions
+came from a batched-`drain` cell. (v4 measured `drain` 10% *slower* than `try_recv` on
+a saturated pipeline, so the old asymmetry had, if anything, understated this crate.)
+Median of five rounds, range alongside:
 
 | Group | Competitor | Melem/s (median) | range | vs. crossbeam |
 |---|---|---:|---|---:|
-| SPSC | rtrb | 561.6 | 513.1 – 575.8 | 15.19× |
-| SPSC | **ultima_rings `BusySpin` (pipelined)** | **480.7** | 466.1 – 522.8 | **13.00×** |
-| SPSC | crossbeam-channel | 37.0 | 34.3 – 37.4 | 1.00× |
-| SPSC | flume | 10.4 | 8.9 – 10.7 | 0.28× |
-| SPSC | kanal | 4.9 | 4.8 – 10.9 | 0.13× ⚠ |
-| MPSC (2 producers) | **ultima_rings `sharded`** (experimental) | **317.4** | 309.4 – 329.8 | **5.28×** |
-| MPSC (2 producers) | crossbeam-channel | 60.1 | 59.4 – 60.6 | 1.00× |
-| MPSC (2 producers) | **ultima_rings `BusySpin`** ‡ | **76.4** | 76.3 – 76.7 | **1.26×** |
-| MPSC (2 producers) | flume | 7.8 | 7.5 – 7.8 | 0.13× |
-| MPSC (2 producers) | kanal | 6.0 | 5.4 – 9.1 | 0.10× ⚠ |
-| MPSC (2 producers) | `disruptor` (batched consume) † | 27.2 | 25.6 – 27.7 | 0.45× |
-| MPSC (2 producers) | `disruptor` (`take(1)`) † | 1.3 | 1.3 – 1.4 | 0.02× ⚠ |
-| MPSC blocking | crossbeam-channel blocking | 42.7 | 41.3 – 43.7 | 1.00× |
-| MPSC blocking | **ultima_rings `Park`** | **14.6** | 13.4 – 14.7 | **0.34×** |
+| SPSC | **ultima_rings `BusySpin`** | **334.1** | 327.5 – 342.3 | **41.4×** |
+| SPSC | rtrb | 325.4 | 316.0 – 334.2 | 40.3× |
+| SPSC | ultima_rings (`drain`) | 301.3 | 296.9 – 312.0 | 37.3× |
+| SPSC | crossbeam-channel | 8.07 | 7.31 – 8.87 | 1.00× |
+| SPSC | flume | 5.45 | 5.05 – 9.75 | 0.68× ⚠ |
+| SPSC | kanal | 1.02 | 0.96 – 1.14 | 0.13× |
+| MPSC (2 producers) | **ultima_rings `sharded`** (experimental) | **78.4** | 74.7 – 80.5 | 3.17× |
+| MPSC (2 producers) | **ultima_rings `BusySpin`** | **46.5** | 41.7 – 53.0 | **1.88×** |
+| MPSC (2 producers) | crossbeam-channel | 24.7 | 22.3 – 30.1 | 1.00× |
+| MPSC (2 producers) | flume | 7.34 | 7.22 – 7.87 | 0.30× |
+| MPSC (2 producers) | `disruptor` (batched consume) † | 6.54 | 6.49 – 6.95 | 0.26× |
+| MPSC (2 producers) | `thingbuf` (ref) | 3.00 | 2.89 – 3.13 | 0.12× |
+| MPSC (2 producers) | `thingbuf` (value) | 2.96 | 2.85 – 3.01 | 0.12× |
+| MPSC (2 producers) | kanal | 1.61 | 1.29 – 1.87 | 0.07× ⚠ |
+| MPSC (2 producers) | `disruptor` (`take(1)`) † | 1.10 | 1.06 – 1.12 | 0.04× |
+| MPSC `String` (2 producers) | **ultima_rings** | **2.45** | 2.27 – 2.63 | 1.35× |
+| MPSC `String` (2 producers) | `thingbuf` (ref) | 2.30 | 2.26 – 2.34 | 1.26× |
+| MPSC `String` (2 producers) | crossbeam-channel | 1.82 | 1.74 – 1.91 | 1.00× |
+| MPSC `String` (2 producers) | `thingbuf` (value) | 1.71 | 1.67 – 1.75 | 0.94× |
+| MPSC blocking | crossbeam-channel blocking | 27.8 | 22.5 – 28.8 | 1.00× |
+| MPSC blocking | **ultima_rings `Park`** | **11.4** | 11.0 – 12.6 | **0.41×** |
+| MPSC blocking | `thingbuf` blocking | 3.29 | 3.21 – 3.43 | 0.12× |
 
-⚠ kanal's spread is 129% (SPSC) and 68% (MPSC) across three runs, where every other cell is
-under 20%. Its median is shown for completeness but is not a meaningful point estimate.
+⚠ flume's SPSC spread is 93.1% and kanal's MPSC spread 45.3% — listed for completeness,
+not point estimates. **Absolutes here do not compare across sessions**: this box ran
+~2.4× slower that day than three days earlier on unchanged code, so ratios are the only
+comparable quantity — and the rig run shows even ratios move with the machine. The same
+groups at two pinned topologies on the 16-core Xeon
+([`docs/bench-results/2026-08-15-bakeoff-rig.md`](docs/bench-results/2026-08-15-bakeoff-rig.md)):
 
-† [`disruptor`](https://crates.io/crates/disruptor) is the maintained Rust port of the LMAX
-Disruptor, and the only competitor here built on the same lineage as `src/mpsc.rs` (claim
-cursor + per-slot availability publication) rather than being a channel. Measured in a later
-session whose comparators reproduced within ~5% of this table. Its batched-consume figure
-(27.2) is **below this crate's own MPSC** (35.1) — notable because its in-place slots mean it
-moves no values and does no drop bookkeeping, so it is doing less work per element and still
-finishing behind. Its `take(1)` figure is *not* a like-for-like single-item comparison:
-`EventPoller::take` runs a full availability walk before applying its limit, making
-single-item consumption O(backlog) per event. Batched *publication* was not measured. See
-[`docs/superpowers/research/2026-08-10-disruptor-survey.md`](docs/superpowers/research/2026-08-10-disruptor-survey.md).
+| ratio | dev box (v4) | rig, 4 CPUs on 2 cores | rig, 16 cores |
+|---|---:|---:|---:|
+| SPSC ultima / rtrb | 1.03× *(tie)* | **1.67×** | **1.80×** |
+| MPSC ultima / crossbeam | **1.88×** | 0.95× *(tie)* | **1.25×** |
+| String ultima / crossbeam | 1.35× | 1.39× *(tie)* | 1.00× *(tie)* |
+| String ultima / thingbuf (ref) | 1.07× *(tie)* | **2.05×** | **2.35×** |
+| Park ultima / crossbeam blocking | 0.41× | 0.18× ± | 0.24× ± |
+| sharded / mpsc | 1.68× | **5.71×** | **6.20×** |
 
-**Compare ratios, not absolute figures across sessions.** This box measured ~20% slower than
-it did on 2026-08-06 on *unchanged* code: `src/spsc.rs` was untouched between the two runs
-and fell from 620.1 to 466–523, while `rtrb` — a third-party crate — fell in lockstep from
-626.5 to 513–576. Deltas computed against the older
-[`2026-08-06-bakeoff.md`](docs/bench-results/2026-08-06-bakeoff.md) table are therefore
-meaningless; the ratios above are same-session and are the comparable quantity.
+± `crossbeam_blocking` carries 31.7% and 62.2% spread at these two points — the rig
+cannot resolve this comparison, and the dev box's 0.41× stands as the measurement of
+record.
 
-SPSC leads `crossbeam-channel` by **13.0×**. It does *not* reach parity with `rtrb`: rtrb led
-in all three runs (0.91×, 0.91×, 0.86×), where the v1 measurement had recorded 0.99×. Since
-`src/spsc.rs` is unchanged between the two, this is not a regression in this crate — either
-the earlier pairing was favourable noise or the two crates respond differently to whatever
-changed about the box, and that has not been diagnosed. Note also that this crate's `drain`
-uses batched consumption while competitors single-pop, so the comparison is not
-like-for-like on API shape.
+What the program supports, each claim with its conditions:
 
-‡ **MPSC now leads `crossbeam-channel` at 1.26× its throughput.** Earlier revisions of this
-section recorded it trailing at 0.58×, and treated the reason as undiagnosed. It is
-diagnosed: the claim CAS fails 22–42% of the time under 2–4 producers, and retrying it
-immediately re-attacks the contended cursor line as fast as the core allows. An exponential
+- **SPSC vs. `crossbeam-channel`: at least 13× on the dev box.** Same-session ratios
+  read 15.5×, 13.0×, 17.4×, and 41.4× across four bake-offs, and crossbeam's cell owns
+  that spread (8.1–39.9 Melem/s across sessions; 118% spread on the rig at 16 cores,
+  where it supports no ratio at all).
+- **SPSC vs. `rtrb`: decided by machine and placement, not by the two ring buffers.**
+  Four dev-box sessions say parity (0.86–1.03×); the Xeon says this crate leads
+  1.67–1.80×; and the pinned cell shows that on one box, ultima leads 1.16× with the
+  two threads on SMT siblings and rtrb leads 1.15× with them on separate physical
+  cores. Both are true, and neither is a fact about the two ring buffers alone.
+- **MPSC vs. `crossbeam-channel`: ahead everywhere measured since the CAS backoff
+  landed, except one tie** — roughly 1.9× on the dev box, a 0.95× tie at the rig's
+  packed topology, 1.25× at 16 cores. The direction survives; the magnitude does not
+  travel.
+- **`Park` trails crossbeam's blocking path at 0.41×.** A caller who wants a blocking
+  API and throughput should pick `Backoff` instead: its blocking cell reaches 38.4
+  Melem/s against `Park`'s 12.1
+  ([`docs/bench-results/2026-08-14-backoff-cells.md`](docs/bench-results/2026-08-14-backoff-cells.md)).
+- **The `String`-payload cells against `thingbuf`'s reference API support no
+  direction.** Three configurations produced three answers — 1.82× behind, tied, and
+  2.05–2.35× ahead — so this README quotes none.
+- **The sharded prototype scales** — 1.68× the production `mpsc` on the dev box,
+  5.71–6.20× on the Xeon, where the shared claim cursor it deletes is the bottleneck.
+  It is feature-gated, `BusySpin`-only, has no loom models, and gives up global FIFO
+  and a global capacity bound; a direction, not a shipping path.
+
+Two findings behind the MPSC row are kept here because earlier revisions of this README
+claimed otherwise:
+
+**The MPSC lead is a retry-policy result, not a claim-shape result.** This crate once
+trailed crossbeam at 0.58×, and the reason was treated as undiagnosed. It is diagnosed:
+the claim CAS fails 22–42% of the time under 2–4 producers, and retrying it immediately
+re-attacks the contended cursor line as fast as the core allows. An exponential
 `spin_loop` backoff between failed attempts is worth **+108% to +143%** across three
-configurations (`docs/bench-results/2026-08-11-cas-backoff.md`). This row is measured in a
-later session than the rest of the table; crossbeam was re-measured alongside it at 60.76,
-within 1% of its row above, so the two are comparable.
+configurations ([`docs/bench-results/2026-08-11-cas-backoff.md`](docs/bench-results/2026-08-11-cas-backoff.md)).
+The gap was never crossbeam claiming via `fetch_add` — its array flavor contains no
+`fetch_add` at all, claiming with `compare_exchange_weak` exactly as this crate does,
+and with the *stronger* ordering of the two (`SeqCst/Relaxed` against this crate's
+`Relaxed/Relaxed`). The `fetch_add` contrast that `docs/design.md` §7 does draw is with
+the `hi-perf-cmp` bench cell this crate was ported from, which claims with an
+unconditional `fetch_add(1)`. Against *that* design the bounded claim buys real
+properties (`try_send` can report `Full` without claiming a slot, and a blocked producer
+holds no unpublished hole for the consumer to reason about), at the cost of the
+CAS-retry loop.
 
-**What the gap was not:** earlier revisions said crossbeam wins via a `fetch_add` claim.
-That is wrong — `crossbeam-channel`'s array flavor contains no `fetch_add` at all, claiming
-with `compare_exchange_weak` on `tail` (and on `head` for its consumer, since it is MPMC).
-Both crates do one CAS per element on a contended cursor, and this crate's is the *weaker*
-ordering of the two (`Relaxed/Relaxed` against crossbeam's `SeqCst/Relaxed`). The difference
-was never the claim instruction — it was how hard each crate retries after a failed one.
+**A batched claim is measured and rejected, not pending.** Reserving a contiguous run of
+sequences per CAS was the long-standing candidate for closing the gap. It is no longer:
+`disruptor` — which ships exactly that design plus a bitmap availability structure —
+measures **6.54 Melem/s against this crate's 46.5** in the table above, while doing
+*less* work per element (its pre-constructed in-place slots move no values and need no
+drop bookkeeping). The batched design measured slower than the one already shipped, so
+it is recorded as tried and rejected rather than pending. A reference implementation
+does not hide a lost benchmark, and does not keep advertising a fix it has since
+measured and dropped.
 
-The `fetch_add` contrast that §7 does draw is with the `hi-perf-cmp` bench cell this crate
-was ported from, which claims with an unconditional `fetch_add(1)`. Against *that* design
-the bounded claim buys real properties (`try_send` can report `Full` without claiming a
-slot, and a blocked producer holds no unpublished hole for the consumer to reason about),
-at the cost of a CAS-retry loop.
-
-A batched claim (reserving a contiguous run of sequences per CAS) was the long-standing
-candidate for closing the gap. It is no longer: `disruptor` — the maintained Rust LMAX port,
-which ships exactly that design plus a bitmap availability structure — measures **27.2
-Melem/s against this crate's 33.2** in the table above, while doing *less* work per element
-(its pre-constructed in-place slots move no values and need no drop bookkeeping). The
-batched design measured slower than the one already shipped, so it is recorded as tried and
-rejected rather than pending. A reference implementation does not hide a lost benchmark, and
-does not keep advertising a fix it has since measured and dropped.
+† [`disruptor`](https://crates.io/crates/disruptor) is the maintained Rust port of the
+LMAX Disruptor, and the only competitor here built on the same lineage as `src/mpsc.rs`
+(claim cursor + per-slot availability publication) rather than being a channel. Its
+`take(1)` figure is *not* a like-for-like single-item comparison: `EventPoller::take`
+runs a full availability walk before applying its limit, making single-item consumption
+O(backlog) per event. Batched *publication* was not measured. See
+[`docs/superpowers/research/2026-08-10-disruptor-survey.md`](docs/superpowers/research/2026-08-10-disruptor-survey.md).
 
 ## Verification
 
