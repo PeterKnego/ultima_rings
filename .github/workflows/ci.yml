@@ -11,7 +11,7 @@ jobs:
   test-x86:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: rustup show active-toolchain
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
@@ -24,18 +24,18 @@ jobs:
     # likely to catch a problem with it.
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: cargo test
 
   loom:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: RUSTFLAGS="--cfg loom" cargo test --test loom --release
 
   miri:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: rustup toolchain install nightly --component miri
       - run: cargo +nightly miri test
