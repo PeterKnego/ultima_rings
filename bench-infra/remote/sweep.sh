@@ -113,7 +113,7 @@ if [ "${SKIP_BAKEOFF:-0}" != "1" ]; then
         echo "### round=$r point=$label"
         taskset -c "$cpus" cargo bench --features experimental-sharded \
           --bench throughput -- "${BAKEOFF_FILTER:-^bakeoff_}" 2>&1 \
-          | grep -E '^bakeoff|thrpt:  \[[0-9]'
+          | grep -E '^(bakeoff|sharded|mpsc)|thrpt:  \[[0-9]'
       done
     } | tee "$OUT/bakeoff.${label}.txt"
   done

@@ -1,0 +1,136 @@
+=== bakeoff smt2x2 ===
+### round=1 point=smt2x2
+mpsc_producer_ladder/p2 time:   [2.8571 ms 2.8654 ms 2.8737 ms]
+                        thrpt:  [34.798 Melem/s 34.899 Melem/s 35.000 Melem/s]
+mpsc_producer_ladder/p4 time:   [3.2131 ms 3.2463 ms 3.2809 ms]
+                        thrpt:  [30.479 Melem/s 30.805 Melem/s 31.122 Melem/s]
+mpsc_producer_ladder/p8 time:   [4.2394 ms 4.3891 ms 4.5428 ms]
+                        thrpt:  [22.013 Melem/s 22.784 Melem/s 23.588 Melem/s]
+mpsc_producer_ladder/p16
+                        thrpt:  [23.384 Melem/s 24.600 Melem/s 25.852 Melem/s]
+mpsc_producer_ladder/p32
+                        thrpt:  [19.514 Melem/s 20.969 Melem/s 22.569 Melem/s]
+mpsc_producer_ladder/p64
+                        thrpt:  [15.585 Melem/s 17.445 Melem/s 19.588 Melem/s]
+bakeoff_sharded_mpsc/ultima_sharded_2_producers
+                        thrpt:  [179.58 Melem/s 179.81 Melem/s 180.01 Melem/s]
+sharded_shard_ladder/p2 time:   [530.41 µs 530.98 µs 531.65 µs]
+                        thrpt:  [188.09 Melem/s 188.33 Melem/s 188.53 Melem/s]
+sharded_shard_ladder/p4 time:   [910.70 µs 943.67 µs 975.60 µs]
+                        thrpt:  [102.50 Melem/s 105.97 Melem/s 109.81 Melem/s]
+sharded_shard_ladder/p8 time:   [1.4474 ms 1.5160 ms 1.5845 ms]
+                        thrpt:  [63.111 Melem/s 65.962 Melem/s 69.091 Melem/s]
+sharded_shard_ladder/p16
+                        thrpt:  [50.668 Melem/s 54.918 Melem/s 59.620 Melem/s]
+sharded_shard_ladder/p32
+                        thrpt:  [43.964 Melem/s 46.960 Melem/s 50.308 Melem/s]
+sharded_shard_ladder/p64
+                        thrpt:  [23.436 Melem/s 26.380 Melem/s 29.874 Melem/s]
+sharded_skew/cap512each_n1
+                        thrpt:  [134.05 Melem/s 134.56 Melem/s 135.01 Melem/s]
+sharded_skew/cap512each_n2
+                        thrpt:  [135.30 Melem/s 135.90 Melem/s 136.52 Melem/s]
+sharded_skew/cap512each_n4
+                        thrpt:  [129.56 Melem/s 130.08 Melem/s 130.54 Melem/s]
+sharded_skew/cap512each_n8
+                        thrpt:  [124.43 Melem/s 124.60 Melem/s 124.77 Melem/s]
+sharded_skew/cap512each_n16
+                        thrpt:  [119.91 Melem/s 120.15 Melem/s 120.36 Melem/s]
+sharded_skew/cap1024total_n2
+                        thrpt:  [134.57 Melem/s 134.76 Melem/s 134.96 Melem/s]
+sharded_skew/cap1024total_n4
+                        thrpt:  [128.21 Melem/s 128.99 Melem/s 129.52 Melem/s]
+sharded_skew/cap1024total_n8
+                        thrpt:  [123.81 Melem/s 124.03 Melem/s 124.24 Melem/s]
+sharded_skew/cap1024total_n16
+                        thrpt:  [119.01 Melem/s 119.10 Melem/s 119.19 Melem/s]
+### round=2 point=smt2x2
+mpsc_producer_ladder/p2 time:   [2.8567 ms 2.8647 ms 2.8730 ms]
+                        thrpt:  [34.807 Melem/s 34.908 Melem/s 35.005 Melem/s]
+mpsc_producer_ladder/p4 time:   [3.3012 ms 3.3458 ms 3.3910 ms]
+                        thrpt:  [29.490 Melem/s 29.888 Melem/s 30.292 Melem/s]
+mpsc_producer_ladder/p8 time:   [4.1863 ms 4.3235 ms 4.4625 ms]
+                        thrpt:  [22.409 Melem/s 23.129 Melem/s 23.888 Melem/s]
+mpsc_producer_ladder/p16
+                        thrpt:  [23.148 Melem/s 24.348 Melem/s 25.594 Melem/s]
+mpsc_producer_ladder/p32
+                        thrpt:  [20.548 Melem/s 21.981 Melem/s 23.547 Melem/s]
+mpsc_producer_ladder/p64
+                        thrpt:  [17.282 Melem/s 19.224 Melem/s 21.494 Melem/s]
+bakeoff_sharded_mpsc/ultima_sharded_2_producers
+                        thrpt:  [223.28 Melem/s 223.74 Melem/s 224.24 Melem/s]
+sharded_shard_ladder/p2 time:   [473.76 µs 474.43 µs 475.18 µs]
+                        thrpt:  [210.45 Melem/s 210.78 Melem/s 211.08 Melem/s]
+sharded_shard_ladder/p4 time:   [1.0268 ms 1.0651 ms 1.1015 ms]
+                        thrpt:  [90.785 Melem/s 93.886 Melem/s 97.390 Melem/s]
+sharded_shard_ladder/p8 time:   [1.6913 ms 1.7761 ms 1.8619 ms]
+                        thrpt:  [53.709 Melem/s 56.304 Melem/s 59.124 Melem/s]
+sharded_shard_ladder/p16
+                        thrpt:  [49.219 Melem/s 52.606 Melem/s 56.445 Melem/s]
+sharded_shard_ladder/p32
+                        thrpt:  [41.608 Melem/s 46.175 Melem/s 51.114 Melem/s]
+sharded_shard_ladder/p64
+                        thrpt:  [25.150 Melem/s 28.609 Melem/s 32.709 Melem/s]
+sharded_skew/cap512each_n1
+                        thrpt:  [126.08 Melem/s 126.20 Melem/s 126.34 Melem/s]
+sharded_skew/cap512each_n2
+                        thrpt:  [124.33 Melem/s 124.55 Melem/s 124.79 Melem/s]
+sharded_skew/cap512each_n4
+                        thrpt:  [120.18 Melem/s 120.34 Melem/s 120.50 Melem/s]
+sharded_skew/cap512each_n8
+                        thrpt:  [110.96 Melem/s 111.11 Melem/s 111.27 Melem/s]
+sharded_skew/cap512each_n16
+                        thrpt:  [107.99 Melem/s 108.07 Melem/s 108.15 Melem/s]
+sharded_skew/cap1024total_n2
+                        thrpt:  [124.29 Melem/s 124.54 Melem/s 124.80 Melem/s]
+sharded_skew/cap1024total_n4
+                        thrpt:  [118.95 Melem/s 119.14 Melem/s 119.34 Melem/s]
+sharded_skew/cap1024total_n8
+                        thrpt:  [111.18 Melem/s 111.36 Melem/s 111.56 Melem/s]
+sharded_skew/cap1024total_n16
+                        thrpt:  [106.82 Melem/s 106.94 Melem/s 107.07 Melem/s]
+### round=3 point=smt2x2
+mpsc_producer_ladder/p2 time:   [2.8654 ms 2.8716 ms 2.8783 ms]
+                        thrpt:  [34.743 Melem/s 34.824 Melem/s 34.899 Melem/s]
+mpsc_producer_ladder/p4 time:   [3.1936 ms 3.2291 ms 3.2647 ms]
+                        thrpt:  [30.631 Melem/s 30.968 Melem/s 31.313 Melem/s]
+mpsc_producer_ladder/p8 time:   [4.2597 ms 4.3995 ms 4.5412 ms]
+                        thrpt:  [22.020 Melem/s 22.730 Melem/s 23.476 Melem/s]
+mpsc_producer_ladder/p16
+                        thrpt:  [24.273 Melem/s 25.334 Melem/s 26.453 Melem/s]
+mpsc_producer_ladder/p32
+                        thrpt:  [20.398 Melem/s 21.747 Melem/s 23.202 Melem/s]
+mpsc_producer_ladder/p64
+                        thrpt:  [14.135 Melem/s 16.177 Melem/s 18.437 Melem/s]
+bakeoff_sharded_mpsc/ultima_sharded_2_producers
+                        thrpt:  [202.61 Melem/s 202.91 Melem/s 203.18 Melem/s]
+sharded_shard_ladder/p2 time:   [454.26 µs 455.06 µs 455.95 µs]
+                        thrpt:  [219.32 Melem/s 219.75 Melem/s 220.14 Melem/s]
+sharded_shard_ladder/p4 time:   [799.84 µs 829.17 µs 860.73 µs]
+                        thrpt:  [116.18 Melem/s 120.60 Melem/s 125.03 Melem/s]
+sharded_shard_ladder/p8 time:   [1.5911 ms 1.6753 ms 1.7617 ms]
+                        thrpt:  [56.762 Melem/s 59.689 Melem/s 62.850 Melem/s]
+sharded_shard_ladder/p16
+                        thrpt:  [56.869 Melem/s 60.634 Melem/s 64.829 Melem/s]
+sharded_shard_ladder/p32
+                        thrpt:  [40.706 Melem/s 44.628 Melem/s 49.154 Melem/s]
+sharded_shard_ladder/p64
+                        thrpt:  [24.104 Melem/s 27.044 Melem/s 30.612 Melem/s]
+sharded_skew/cap512each_n1
+                        thrpt:  [148.53 Melem/s 148.73 Melem/s 148.92 Melem/s]
+sharded_skew/cap512each_n2
+                        thrpt:  [142.53 Melem/s 142.97 Melem/s 143.46 Melem/s]
+sharded_skew/cap512each_n4
+                        thrpt:  [138.58 Melem/s 139.00 Melem/s 139.48 Melem/s]
+sharded_skew/cap512each_n8
+                        thrpt:  [135.05 Melem/s 135.22 Melem/s 135.38 Melem/s]
+sharded_skew/cap512each_n16
+                        thrpt:  [129.41 Melem/s 129.96 Melem/s 130.30 Melem/s]
+sharded_skew/cap1024total_n2
+                        thrpt:  [142.12 Melem/s 142.49 Melem/s 142.88 Melem/s]
+sharded_skew/cap1024total_n4
+                        thrpt:  [136.66 Melem/s 137.14 Melem/s 137.71 Melem/s]
+sharded_skew/cap1024total_n8
+                        thrpt:  [131.17 Melem/s 131.53 Melem/s 131.91 Melem/s]
+sharded_skew/cap1024total_n16
+                        thrpt:  [127.83 Melem/s 128.22 Melem/s 128.59 Melem/s]

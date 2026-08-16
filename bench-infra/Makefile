@@ -51,7 +51,7 @@ sweep: ## rsync the tree and run the core-count sweep, then fetch
 	  --exclude target --exclude .git --exclude bench-infra \
 	  $(SRC)/ ubuntu@$(HOST):$(REMOTE_HOME)/ultima_rings/
 	scp $(SSH_OPTS) -i $(SSH_KEY) remote/sweep.sh ubuntu@$(HOST):$(REMOTE_HOME)/
-	$(SSH) ubuntu@$(HOST) 'source ~/.cargo/env && SKIP_BAKEOFF=$(SKIP_BAKEOFF) SKIP_CPUCOST=$(SKIP_CPUCOST) BAKEOFF_POINTS="$(BAKEOFF_POINTS)" BAKEOFF_ROUNDS=$(BAKEOFF_ROUNDS) bash $(REMOTE_HOME)/sweep.sh'
+	$(SSH) ubuntu@$(HOST) 'source ~/.cargo/env && SKIP_BAKEOFF=$(SKIP_BAKEOFF) SKIP_CPUCOST=$(SKIP_CPUCOST) BAKEOFF_POINTS="$(BAKEOFF_POINTS)" BAKEOFF_ROUNDS=$(BAKEOFF_ROUNDS) BAKEOFF_FILTER="$(BAKEOFF_FILTER)" bash $(REMOTE_HOME)/sweep.sh'
 	$(MAKE) fetch
 
 layout: ## rsync + re-derive the resolution budget (5 alignments), then fetch

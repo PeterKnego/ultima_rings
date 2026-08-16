@@ -988,6 +988,168 @@ fn bakeoff_sharded_mpsc(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
+// Shard ladder: the balanced sharded workload from 2 up to 64 shards at the
+// same fixed 1024 total slots as `mpsc_producer_ladder`, so each rung compares
+// directly against the same-p mpsc rung. Every sharded figure recorded so far
+// — 321.5 Melem/s on the VM (2026-08-07-sharded-mpsc.md), 5.71–6.20x mpsc on
+// the rig (2026-08-15-bakeoff-rig.md) — rests on exactly 2 shards, while the
+// costs that could erode it grow with n: the consumer's empty/disconnect scan
+// is O(n_shards), and at a fixed total the per-shard buffer shrinks (512 at
+// n=2 down to 16 at n=64). This ladder measures whether the 2-shard result
+// survives the shard counts a graduated API would actually be built with.
+//
+// Same interpretation caveat as `mpsc_producer_ladder`: thread spawn cost per
+// iteration grows with the shard count and is a large share of the
+// measurement at 64. It is the same cost at the same producer count in the
+// mpsc ladder, so compare rungs across the two ladders, not across shard
+// counts within this one.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "experimental-sharded")]
+fn sharded_shard_ladder(c: &mut Criterion) {
+    use ultima_rings::sharded;
+    let mut g = c.benchmark_group("sharded_shard_ladder");
+    g.throughput(Throughput::Elements(BATCH));
+    for n_shards in [2usize, 4, 8, 16, 32, 64] {
+        g.bench_function(format!("p{n_shards}"), |b| {
+            b.iter_custom(|iters| {
+                let mut total = std::time::Duration::ZERO;
+                for _ in 0..iters {
+                    let (senders, mut rx) =
+                        sharded::channel::<u64>(n_shards, 1024, WaitStrategy::BusySpin);
+                    let barrier = Arc::new(Barrier::new(n_shards + 1));
+                    let per = BATCH / n_shards as u64;
+                    let mut handles = Vec::new();
+                    for mut tx in senders {
+                        let barrier = Arc::clone(&barrier);
+                        handles.push(thread::spawn(move || {
+                            barrier.wait();
+                            for i in 0..per {
+                                let mut v = i;
+                                loop {
+                                    match tx.try_send(v) {
+                                        Ok(()) => break,
+                                        Err(TrySendError::Full(b)) => {
+                                            v = b;
+                                            std::hint::spin_loop();
+                                        }
+                                        Err(TrySendError::Disconnected(_)) => return,
+                                    }
+                                }
+                            }
+                        }));
+                    }
+                    barrier.wait();
+                    let t = Instant::now();
+                    let target = per * n_shards as u64;
+                    let mut got = 0u64;
+                    loop {
+                        match rx.try_recv() {
+                            Ok(_) => got += 1,
+                            Err(TryRecvError::Empty) => std::hint::spin_loop(),
+                            Err(TryRecvError::Disconnected) => break,
+                        }
+                        if got == target {
+                            break;
+                        }
+                    }
+                    total += t.elapsed();
+                    for h in handles {
+                        h.join().unwrap();
+                    }
+                }
+                total
+            })
+        });
+    }
+    g.finish();
+}
+
+// ---------------------------------------------------------------------------
+// Skewed load: one hot producer sends the whole batch while the other
+// n_shards - 1 senders sit idle (alive, never sending). This is the regime
+// the balanced cells cannot reach and the one the sharded contract is weakest
+// in: every VISIT_BUDGET (32) items the consumer leaves the hot ring and
+// sweeps n-1 permanently-empty ones to find it again, and backpressure binds
+// at the hot shard's own capacity while every other slot in the channel sits
+// unused.
+//
+// Two capacity parameterizations, because the sweep cost and the fixed-budget
+// footgun are separate effects:
+// - `cap512each`: per-shard capacity held at 512 while n grows, so the hot
+//   shard's buffer is constant and the delta across rungs is the sweep cost
+//   alone. n=1 is the degenerate baseline: one shard, no sweep, structurally
+//   an spsc channel behind the sharded API.
+// - `cap1024total`: the same 1024-slot budget as every bake-off cell, so the
+//   hot shard shrinks with n (512 at n=2 down to 64 at n=16). The gap between
+//   this and `cap512each` at the same n is what the per-shard backpressure
+//   contract costs a skewed workload at a fixed memory budget.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "experimental-sharded")]
+fn sharded_skew(c: &mut Criterion) {
+    use ultima_rings::sharded;
+    let mut g = c.benchmark_group("sharded_skew");
+    g.throughput(Throughput::Elements(BATCH));
+    // (label, n_shards, total_cap) — per-shard capacity is total / n.
+    let mut cells: Vec<(String, usize, usize)> = Vec::new();
+    for n in [1usize, 2, 4, 8, 16] {
+        cells.push((format!("cap512each_n{n}"), n, 512 * n));
+    }
+    for n in [2usize, 4, 8, 16] {
+        cells.push((format!("cap1024total_n{n}"), n, 1024));
+    }
+    for (label, n_shards, total_cap) in cells {
+        g.bench_function(&label, |b| {
+            b.iter_custom(|iters| {
+                let mut total = std::time::Duration::ZERO;
+                for _ in 0..iters {
+                    let (mut senders, mut rx) =
+                        sharded::channel::<u64>(n_shards, total_cap, WaitStrategy::BusySpin);
+                    let mut hot = senders.remove(0);
+                    // The idle senders stay alive in this thread so their
+                    // shards read Empty, not Disconnected, all run long.
+                    let idle = senders;
+                    let barrier = Arc::new(Barrier::new(2));
+                    let b2 = Arc::clone(&barrier);
+                    let producer = thread::spawn(move || {
+                        b2.wait();
+                        for i in 0..BATCH {
+                            let mut v = i;
+                            loop {
+                                match hot.try_send(v) {
+                                    Ok(()) => break,
+                                    Err(TrySendError::Full(b)) => {
+                                        v = b;
+                                        std::hint::spin_loop();
+                                    }
+                                    Err(TrySendError::Disconnected(_)) => return,
+                                }
+                            }
+                        }
+                    });
+                    barrier.wait();
+                    let t = Instant::now();
+                    let mut got = 0u64;
+                    while got < BATCH {
+                        match rx.try_recv() {
+                            Ok(_) => got += 1,
+                            Err(TryRecvError::Empty) => std::hint::spin_loop(),
+                            Err(TryRecvError::Disconnected) => break,
+                        }
+                    }
+                    total += t.elapsed();
+                    producer.join().unwrap();
+                    drop(idle);
+                }
+                total
+            })
+        });
+    }
+    g.finish();
+}
+
+// ---------------------------------------------------------------------------
 // Park-mode MPSC bake-off. The other MPSC cells all drive the non-blocking
 // `try_*` API with a hand-rolled spin, so nothing there exercises either
 // crate's blocking path — a gap the v2 spec flagged
@@ -1766,7 +1928,12 @@ criterion_group!(
 );
 
 #[cfg(feature = "experimental-sharded")]
-criterion_group!(bakeoff_sharded, bakeoff_sharded_mpsc);
+criterion_group!(
+    bakeoff_sharded,
+    bakeoff_sharded_mpsc,
+    sharded_shard_ladder,
+    sharded_skew
+);
 
 #[cfg(feature = "experimental-sharded")]
 criterion_main!(benches, bakeoff, bakeoff_sharded);
