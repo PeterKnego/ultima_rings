@@ -5,7 +5,7 @@ edition = "2024"
 license = "Apache-2.0"
 authors = ["Peter Knego <peter@knego.net>"]
 description = "Bounded lock-free SPSC/MPSC rings with selectable wait strategies"
-repository = "https://github.com/pknego/ultima_rings"
+repository = "https://github.com/PeterKnego/ultima_rings"
 
 [dependencies]
 

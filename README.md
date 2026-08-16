@@ -41,6 +41,20 @@ receivers, an unbounded queue, or arbitrary capacities, reach for `crossbeam-cha
 or `flume` — the generality you'd be paying for here is generality this crate
 deliberately does not have.
 
+## Documentation
+
+Full documentation lives under [`docs/`](docs/README.md), organized by need:
+
+- [Your first pipeline](docs/tutorials/your-first-pipeline.md) — a ten-minute
+  hands-on lesson building a two-thread pipeline.
+- [How-to guides](docs/how-to/README.md) — choosing a topology and strategy,
+  backpressure, clean shutdown, batching, and thread placement.
+- [Reference](docs/reference/README.md) — channel guarantees, the
+  wait-strategy table, and error/disconnect semantics; per-item API docs via
+  `cargo doc --open`.
+- [Explanation](docs/explanation/README.md) — the
+  [design document](docs/design.md) and how to read the benchmark numbers.
+
 ## API
 
 ```rust
@@ -62,19 +76,17 @@ see the crate's rustdoc for the full surface.
 Chosen per channel at construction, applying to both blocked directions (consumer-on-empty,
 producer-on-full):
 
-| Strategy | Behavior | Use when |
-|---|---|---|
-| `BusySpin` | `spin_loop()` until progress (~27 ns granularity); one core pinned per blocked side | latency matters at any CPU cost |
-| `BackoffYield` | 10 spins, then `yield_now()` indefinitely (~0.7 µs granularity); never parks, self-waking | you want near-`BusySpin` latency but must not starve other runnable threads |
-| `Backoff` | Aeron-style idle ladder — 10 spins → 20 yields → timed park doubling 64 µs → 1 ms, self-waking | a balanced default: low latency while active, low CPU while idle |
-| `Park` | Fully blocking park/wake via the notify layer; ~10 µs median wake latency | idle CPU efficiency matters more than the last few microseconds of latency |
+| Strategy | Behavior |
+|---|---|
+| `BusySpin` | `spin_loop()` until progress; one core pinned per blocked side |
+| `BackoffYield` | spins, then `yield_now()` indefinitely; never parks, self-waking |
+| `Backoff` | Aeron-style idle ladder — spins → yields → timed park doubling 64 µs → 1 ms, self-waking |
+| `Park` | fully blocking park/wake via the notify layer |
 
-`BackoffYield` still consumes a core when the machine is otherwise idle — `yield_now()`
-returns immediately with nothing else runnable. It buys prompt preemption under
-contention, not idle CPU; reach for `Backoff` or `Park` if CPU is the concern. The
-`Backoff` park floor is 64 µs because `thread::park_timeout` cannot deliver sub-floor
-sleeps: a 1 µs request measured ~60 µs on a 4-vCPU Linux VM, so finer rungs would be
-fiction (see `src/wait.rs`'s `PARK_MIN`).
+Measured idle-CPU and wake-latency figures for all four are in the
+[wait-strategy reference](docs/reference/wait-strategies.md); for picking one
+to match a latency/CPU budget, see
+[How to choose a topology and wait strategy](docs/how-to/choose-a-topology-and-wait-strategy.md).
 
 ## Measured numbers
 
