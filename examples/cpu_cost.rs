@@ -309,7 +309,11 @@ fn stop_external(stop: Arc<AtomicBool>, handles: Vec<thread::JoinHandle<u64>>) -
 }
 
 fn report(name: &str, runs: &mut [Run]) {
-    runs.sort_by(|a, b| a.cpu_ns_per_elem().partial_cmp(&b.cpu_ns_per_elem()).unwrap());
+    runs.sort_by(|a, b| {
+        a.cpu_ns_per_elem()
+            .partial_cmp(&b.cpu_ns_per_elem())
+            .unwrap()
+    });
     let m = &runs[runs.len() / 2];
     println!(
         "{:<26} {:>9.2} {:>8.2} {:>12.1}",
@@ -345,130 +349,130 @@ fn main() {
          {ITERS} iterations per run, median of {ROUNDS}\n"
     );
     if want("saturated") {
-    println!(
-        "{:<26} {:>9} {:>8} {:>12}",
-        "config", "Melem/s", "cores", "cpu ns/elem"
-    );
-    println!("{}", "-".repeat(59));
+        println!(
+            "{:<26} {:>9} {:>8} {:>12}",
+            "config", "Melem/s", "cores", "cpu ns/elem"
+        );
+        println!("{}", "-".repeat(59));
 
-    macro_rules! bench {
-        ($name:literal, $make:expr, $send:expr, $recv:expr) => {{
-            let mut runs = Vec::new();
-            for _ in 0..ROUNDS {
-                runs.push(measure($make, $send, $recv));
-            }
-            report($name, &mut runs);
-        }};
-    }
-
-    // ---- ultima_rings ----
-    bench!(
-        "ultima BusySpin (poll)",
-        || mpsc::channel::<u64>(CAP, WaitStrategy::BusySpin),
-        |tx: &mut mpsc::Sender<u64>, mut v: u64| {
-            loop {
-                match tx.try_send(v) {
-                    Ok(()) => return true,
-                    Err(TrySendError::Full(b)) => {
-                        v = b;
-                        std::hint::spin_loop();
-                    }
-                    Err(TrySendError::Disconnected(_)) => return false,
+        macro_rules! bench {
+            ($name:literal, $make:expr, $send:expr, $recv:expr) => {{
+                let mut runs = Vec::new();
+                for _ in 0..ROUNDS {
+                    runs.push(measure($make, $send, $recv));
                 }
-            }
-        },
-        |rx: &mut mpsc::Receiver<u64>| {
-            loop {
-                match rx.try_recv() {
-                    Ok(_) => return true,
-                    Err(TryRecvError::Empty) => std::hint::spin_loop(),
-                    Err(TryRecvError::Disconnected) => return false,
-                }
-            }
+                report($name, &mut runs);
+            }};
         }
-    );
 
-    bench!(
-        "ultima Park (block)",
-        || mpsc::channel::<u64>(CAP, WaitStrategy::Park),
-        |tx: &mut mpsc::Sender<u64>, v: u64| tx.send(v).is_ok(),
-        |rx: &mut mpsc::Receiver<u64>| rx.recv().is_ok()
-    );
-
-    // ---- crossbeam-channel ----
-    bench!(
-        "crossbeam (poll)",
-        || crossbeam_channel::bounded::<u64>(CAP),
-        |tx: &mut crossbeam_channel::Sender<u64>, mut v: u64| {
-            loop {
-                match tx.try_send(v) {
-                    Ok(()) => return true,
-                    Err(crossbeam_channel::TrySendError::Full(b)) => {
-                        v = b;
-                        std::hint::spin_loop();
+        // ---- ultima_rings ----
+        bench!(
+            "ultima BusySpin (poll)",
+            || mpsc::channel::<u64>(CAP, WaitStrategy::BusySpin),
+            |tx: &mut mpsc::Sender<u64>, mut v: u64| {
+                loop {
+                    match tx.try_send(v) {
+                        Ok(()) => return true,
+                        Err(TrySendError::Full(b)) => {
+                            v = b;
+                            std::hint::spin_loop();
+                        }
+                        Err(TrySendError::Disconnected(_)) => return false,
                     }
-                    Err(crossbeam_channel::TrySendError::Disconnected(_)) => return false,
                 }
-            }
-        },
-        |rx: &mut crossbeam_channel::Receiver<u64>| {
-            loop {
-                match rx.try_recv() {
-                    Ok(_) => return true,
-                    Err(crossbeam_channel::TryRecvError::Empty) => std::hint::spin_loop(),
-                    Err(crossbeam_channel::TryRecvError::Disconnected) => return false,
-                }
-            }
-        }
-    );
-
-    bench!(
-        "crossbeam (block)",
-        || crossbeam_channel::bounded::<u64>(CAP),
-        |tx: &mut crossbeam_channel::Sender<u64>, v: u64| tx.send(v).is_ok(),
-        |rx: &mut crossbeam_channel::Receiver<u64>| rx.recv().is_ok()
-    );
-
-    // ---- thingbuf ----
-    bench!(
-        "thingbuf (poll)",
-        || thingbuf::mpsc::blocking::channel::<u64>(CAP),
-        |tx: &mut thingbuf::mpsc::blocking::Sender<u64>, mut v: u64| {
-            loop {
-                match tx.try_send(v) {
-                    Ok(()) => return true,
-                    Err(thingbuf::mpsc::errors::TrySendError::Full(b)) => {
-                        v = b;
-                        std::hint::spin_loop();
+            },
+            |rx: &mut mpsc::Receiver<u64>| {
+                loop {
+                    match rx.try_recv() {
+                        Ok(_) => return true,
+                        Err(TryRecvError::Empty) => std::hint::spin_loop(),
+                        Err(TryRecvError::Disconnected) => return false,
                     }
-                    Err(_) => return false,
                 }
             }
-        },
-        |rx: &mut thingbuf::mpsc::blocking::Receiver<u64>| {
-            loop {
-                match rx.try_recv() {
-                    Ok(_) => return true,
-                    Err(thingbuf::mpsc::errors::TryRecvError::Empty) => std::hint::spin_loop(),
-                    Err(_) => return false,
+        );
+
+        bench!(
+            "ultima Park (block)",
+            || mpsc::channel::<u64>(CAP, WaitStrategy::Park),
+            |tx: &mut mpsc::Sender<u64>, v: u64| tx.send(v).is_ok(),
+            |rx: &mut mpsc::Receiver<u64>| rx.recv().is_ok()
+        );
+
+        // ---- crossbeam-channel ----
+        bench!(
+            "crossbeam (poll)",
+            || crossbeam_channel::bounded::<u64>(CAP),
+            |tx: &mut crossbeam_channel::Sender<u64>, mut v: u64| {
+                loop {
+                    match tx.try_send(v) {
+                        Ok(()) => return true,
+                        Err(crossbeam_channel::TrySendError::Full(b)) => {
+                            v = b;
+                            std::hint::spin_loop();
+                        }
+                        Err(crossbeam_channel::TrySendError::Disconnected(_)) => return false,
+                    }
+                }
+            },
+            |rx: &mut crossbeam_channel::Receiver<u64>| {
+                loop {
+                    match rx.try_recv() {
+                        Ok(_) => return true,
+                        Err(crossbeam_channel::TryRecvError::Empty) => std::hint::spin_loop(),
+                        Err(crossbeam_channel::TryRecvError::Disconnected) => return false,
+                    }
                 }
             }
-        }
-    );
+        );
 
-    bench!(
-        "thingbuf (block)",
-        || thingbuf::mpsc::blocking::channel::<u64>(CAP),
-        |tx: &mut thingbuf::mpsc::blocking::Sender<u64>, v: u64| tx.send(v).is_ok(),
-        |rx: &mut thingbuf::mpsc::blocking::Receiver<u64>| rx.recv().is_some()
-    );
+        bench!(
+            "crossbeam (block)",
+            || crossbeam_channel::bounded::<u64>(CAP),
+            |tx: &mut crossbeam_channel::Sender<u64>, v: u64| tx.send(v).is_ok(),
+            |rx: &mut crossbeam_channel::Receiver<u64>| rx.recv().is_ok()
+        );
 
-    println!(
-        "\ncores       = CPU time / wall time. 3.0 means all three threads spun \
+        // ---- thingbuf ----
+        bench!(
+            "thingbuf (poll)",
+            || thingbuf::mpsc::blocking::channel::<u64>(CAP),
+            |tx: &mut thingbuf::mpsc::blocking::Sender<u64>, mut v: u64| {
+                loop {
+                    match tx.try_send(v) {
+                        Ok(()) => return true,
+                        Err(thingbuf::mpsc::errors::TrySendError::Full(b)) => {
+                            v = b;
+                            std::hint::spin_loop();
+                        }
+                        Err(_) => return false,
+                    }
+                }
+            },
+            |rx: &mut thingbuf::mpsc::blocking::Receiver<u64>| {
+                loop {
+                    match rx.try_recv() {
+                        Ok(_) => return true,
+                        Err(thingbuf::mpsc::errors::TryRecvError::Empty) => std::hint::spin_loop(),
+                        Err(_) => return false,
+                    }
+                }
+            }
+        );
+
+        bench!(
+            "thingbuf (block)",
+            || thingbuf::mpsc::blocking::channel::<u64>(CAP),
+            |tx: &mut thingbuf::mpsc::blocking::Sender<u64>, v: u64| tx.send(v).is_ok(),
+            |rx: &mut thingbuf::mpsc::blocking::Receiver<u64>| rx.recv().is_some()
+        );
+
+        println!(
+            "\ncores       = CPU time / wall time. 3.0 means all three threads spun \
          continuously.\ncpu ns/elem = CPU nanoseconds spent per element \
          delivered; lower is cheaper.\n              It is the reciprocal of \
          throughput-per-core, so the two say the same thing."
-    );
+        );
     } // end saturated
 
     // -----------------------------------------------------------------------
@@ -484,64 +488,64 @@ fn main() {
     // for the producer to be genuinely off-CPU.
     // -----------------------------------------------------------------------
     if want("paced") {
-    println!(
-        "\n\nPaced: 1 producer sending every {:?}, {PACED_ELEMS} elements, \
+        println!(
+            "\n\nPaced: 1 producer sending every {:?}, {PACED_ELEMS} elements, \
          consumer idle between each.\nConsumer CPU only. This is where parking \
          either pays for itself or does not.\n",
-        PACED_GAP
-    );
-    println!(
-        "{:<26} {:>9} {:>14} {:>12}",
-        "config", "cores", "% of a core", "cpu ns/elem"
-    );
-    println!("{}", "-".repeat(65));
+            PACED_GAP
+        );
+        println!(
+            "{:<26} {:>9} {:>14} {:>12}",
+            "config", "cores", "% of a core", "cpu ns/elem"
+        );
+        println!("{}", "-".repeat(65));
 
-    for (name, strat) in [
-        ("ultima BusySpin", WaitStrategy::BusySpin),
-        ("ultima BackoffYield", WaitStrategy::BackoffYield),
-        ("ultima Backoff", WaitStrategy::Backoff),
-        ("ultima Park", WaitStrategy::Park),
-    ] {
+        for (name, strat) in [
+            ("ultima BusySpin", WaitStrategy::BusySpin),
+            ("ultima BackoffYield", WaitStrategy::BackoffYield),
+            ("ultima Backoff", WaitStrategy::Backoff),
+            ("ultima Park", WaitStrategy::Park),
+        ] {
+            let mut runs: Vec<Paced> = (0..ROUNDS)
+                .map(|_| {
+                    paced(
+                        || mpsc::channel::<u64>(CAP, strat),
+                        |tx: &mut mpsc::Sender<u64>, v| tx.send(v).is_ok(),
+                        |rx: &mut mpsc::Receiver<u64>| rx.recv().is_ok(),
+                    )
+                })
+                .collect();
+            report_paced(name, &mut runs);
+        }
+
         let mut runs: Vec<Paced> = (0..ROUNDS)
             .map(|_| {
                 paced(
-                    || mpsc::channel::<u64>(CAP, strat),
-                    |tx: &mut mpsc::Sender<u64>, v| tx.send(v).is_ok(),
-                    |rx: &mut mpsc::Receiver<u64>| rx.recv().is_ok(),
+                    || crossbeam_channel::bounded::<u64>(CAP),
+                    |tx: &mut crossbeam_channel::Sender<u64>, v| tx.send(v).is_ok(),
+                    |rx: &mut crossbeam_channel::Receiver<u64>| rx.recv().is_ok(),
                 )
             })
             .collect();
-        report_paced(name, &mut runs);
-    }
+        report_paced("crossbeam (block)", &mut runs);
 
-    let mut runs: Vec<Paced> = (0..ROUNDS)
-        .map(|_| {
-            paced(
-                || crossbeam_channel::bounded::<u64>(CAP),
-                |tx: &mut crossbeam_channel::Sender<u64>, v| tx.send(v).is_ok(),
-                |rx: &mut crossbeam_channel::Receiver<u64>| rx.recv().is_ok(),
-            )
-        })
-        .collect();
-    report_paced("crossbeam (block)", &mut runs);
+        let mut runs: Vec<Paced> = (0..ROUNDS)
+            .map(|_| {
+                paced(
+                    || thingbuf::mpsc::blocking::channel::<u64>(CAP),
+                    |tx: &mut thingbuf::mpsc::blocking::Sender<u64>, v| tx.send(v).is_ok(),
+                    |rx: &mut thingbuf::mpsc::blocking::Receiver<u64>| rx.recv().is_some(),
+                )
+            })
+            .collect();
+        report_paced("thingbuf (block)", &mut runs);
 
-    let mut runs: Vec<Paced> = (0..ROUNDS)
-        .map(|_| {
-            paced(
-                || thingbuf::mpsc::blocking::channel::<u64>(CAP),
-                |tx: &mut thingbuf::mpsc::blocking::Sender<u64>, v| tx.send(v).is_ok(),
-                |rx: &mut thingbuf::mpsc::blocking::Receiver<u64>| rx.recv().is_some(),
-            )
-        })
-        .collect();
-    report_paced("thingbuf (block)", &mut runs);
-
-    println!(
-        "\ncores measured on the consumer thread alone. 1.0 means it held a \
+        println!(
+            "\ncores measured on the consumer thread alone. 1.0 means it held a \
          core saturated\nfor the entire run while doing almost nothing — one \
          element every {:?}.",
-        PACED_GAP
-    );
+            PACED_GAP
+        );
     } // end paced
 
     // -----------------------------------------------------------------------
@@ -561,132 +565,132 @@ fn main() {
     // cannot answer this question no matter which strategy it is given.
     // -----------------------------------------------------------------------
     if want("oversub") {
-    println!(
-        "\n\nOversubscribed: blocking send/recv, {OVER_BATCH} elements, \
+        println!(
+            "\n\nOversubscribed: blocking send/recv, {OVER_BATCH} elements, \
          {OVER_ITERS} iterations, median of {ROUNDS}.\nProducer counts are \
          multiples of the {} cores this run is sized against.\n",
-        cores()
-    );
-    println!(
-        "{:<22} {:>9} {:>6} {:>9} {:>8} {:>12}",
-        "strategy", "producers", "ratio", "Melem/s", "cores", "cpu ns/elem"
-    );
-    println!("{}", "-".repeat(71));
+            cores()
+        );
+        println!(
+            "{:<22} {:>9} {:>6} {:>9} {:>8} {:>12}",
+            "strategy", "producers", "ratio", "Melem/s", "cores", "cpu ns/elem"
+        );
+        println!("{}", "-".repeat(71));
 
-    for (producers, ratio) in producer_ladder() {
+        for (producers, ratio) in producer_ladder() {
+            for (name, strat) in [
+                ("BusySpin", WaitStrategy::BusySpin),
+                ("BackoffYield", WaitStrategy::BackoffYield),
+                ("Backoff", WaitStrategy::Backoff),
+                ("Park", WaitStrategy::Park),
+            ] {
+                let mut runs: Vec<Run> = (0..ROUNDS)
+                    .map(|_| {
+                        measure_with(
+                            producers,
+                            OVER_BATCH,
+                            OVER_ITERS,
+                            || mpsc::channel::<u64>(CAP, strat),
+                            |tx: &mut mpsc::Sender<u64>, v| tx.send(v).is_ok(),
+                            |rx: &mut mpsc::Receiver<u64>| rx.recv().is_ok(),
+                        )
+                    })
+                    .collect();
+                runs.sort_by(|a, b| {
+                    a.cpu_ns_per_elem()
+                        .partial_cmp(&b.cpu_ns_per_elem())
+                        .unwrap()
+                });
+                let m = &runs[runs.len() / 2];
+                println!(
+                    "{:<22} {:>9} {:>6} {:>9.2} {:>8.2} {:>12.1}",
+                    name,
+                    producers,
+                    ratio,
+                    m.melem_per_s(),
+                    m.cores(),
+                    m.cpu_ns_per_elem(),
+                );
+            }
+            println!();
+        }
+    } // end oversub
+
+    if want("external") {
+        // -----------------------------------------------------------------------
+        // External load. The section above oversubscribes with the channel's own
+        // producers, which is the easy case to construct and the rarer one to meet.
+        // The ordinary case is a channel inside a process that is already busy with
+        // work of its own, and it asks a question none of the tables above can:
+        // what does the wait strategy cost *everyone else*?
+        //
+        // Channel topology is fixed at 2 producers + 1 consumer — three threads,
+        // which fits this box — and the oversubscription comes entirely from
+        // EXT_THREADS CPU-bound threads that never touch the channel. Under CFS
+        // every thread gets its fair share whether it spins or sleeps, so the
+        // measurable difference is whether a waiting thread *uses* its share or
+        // hands it back.
+        // -----------------------------------------------------------------------
+        let ext = ext_threads();
+        let (stop, hs) = spawn_external(ext);
+        let t = Instant::now();
+        thread::sleep(std::time::Duration::from_secs(1));
+        let base_wall = t.elapsed();
+        let base_ops = stop_external(stop, hs);
+        let baseline = base_ops as f64 / base_wall.as_secs_f64();
+
+        println!(
+            "\n\nExternal load: 2 producers + 1 consumer, plus {ext} CPU-bound \
+         threads outside the channel.\n{} threads on {} cores. Baseline is those \
+         {ext} threads alone: {:.0} Mops/s.\n",
+            ext + 3,
+            cores(),
+            baseline / 1e6
+        );
+        println!(
+            "{:<16} {:>9} {:>12} {:>12} {:>12}",
+            "strategy", "Melem/s", "ext Mops/s", "ext kept", "cpu ns/elem"
+        );
+        println!("{}", "-".repeat(65));
+
         for (name, strat) in [
             ("BusySpin", WaitStrategy::BusySpin),
             ("BackoffYield", WaitStrategy::BackoffYield),
             ("Backoff", WaitStrategy::Backoff),
             ("Park", WaitStrategy::Park),
         ] {
-            let mut runs: Vec<Run> = (0..ROUNDS)
+            let mut rows: Vec<(f64, f64, f64)> = (0..ROUNDS)
                 .map(|_| {
-                    measure_with(
-                        producers,
+                    let (stop, hs) = spawn_external(ext);
+                    let run = measure_with(
+                        2,
                         OVER_BATCH,
                         OVER_ITERS,
                         || mpsc::channel::<u64>(CAP, strat),
                         |tx: &mut mpsc::Sender<u64>, v| tx.send(v).is_ok(),
                         |rx: &mut mpsc::Receiver<u64>| rx.recv().is_ok(),
-                    )
+                    );
+                    let ops = stop_external(stop, hs);
+                    let ext = ops as f64 / (run.wall_ns as f64 / 1e9);
+                    (run.melem_per_s(), ext, run.cpu_ns_per_elem())
                 })
                 .collect();
-            runs.sort_by(|a, b| {
-                a.cpu_ns_per_elem()
-                    .partial_cmp(&b.cpu_ns_per_elem())
-                    .unwrap()
-            });
-            let m = &runs[runs.len() / 2];
+            rows.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            let m = rows[rows.len() / 2];
             println!(
-                "{:<22} {:>9} {:>6} {:>9.2} {:>8.2} {:>12.1}",
+                "{:<16} {:>9.2} {:>12.0} {:>11.0}% {:>12.1}",
                 name,
-                producers,
-                ratio,
-                m.melem_per_s(),
-                m.cores(),
-                m.cpu_ns_per_elem(),
+                m.0,
+                m.1 / 1e6,
+                m.1 / baseline * 100.0,
+                m.2,
             );
         }
-        println!();
-    }
-    } // end oversub
 
-    if want("external") {
-    // -----------------------------------------------------------------------
-    // External load. The section above oversubscribes with the channel's own
-    // producers, which is the easy case to construct and the rarer one to meet.
-    // The ordinary case is a channel inside a process that is already busy with
-    // work of its own, and it asks a question none of the tables above can:
-    // what does the wait strategy cost *everyone else*?
-    //
-    // Channel topology is fixed at 2 producers + 1 consumer — three threads,
-    // which fits this box — and the oversubscription comes entirely from
-    // EXT_THREADS CPU-bound threads that never touch the channel. Under CFS
-    // every thread gets its fair share whether it spins or sleeps, so the
-    // measurable difference is whether a waiting thread *uses* its share or
-    // hands it back.
-    // -----------------------------------------------------------------------
-    let ext = ext_threads();
-    let (stop, hs) = spawn_external(ext);
-    let t = Instant::now();
-    thread::sleep(std::time::Duration::from_secs(1));
-    let base_wall = t.elapsed();
-    let base_ops = stop_external(stop, hs);
-    let baseline = base_ops as f64 / base_wall.as_secs_f64();
-
-    println!(
-        "\n\nExternal load: 2 producers + 1 consumer, plus {ext} CPU-bound \
-         threads outside the channel.\n{} threads on {} cores. Baseline is those \
-         {ext} threads alone: {:.0} Mops/s.\n",
-        ext + 3,
-        cores(),
-        baseline / 1e6
-    );
-    println!(
-        "{:<16} {:>9} {:>12} {:>12} {:>12}",
-        "strategy", "Melem/s", "ext Mops/s", "ext kept", "cpu ns/elem"
-    );
-    println!("{}", "-".repeat(65));
-
-    for (name, strat) in [
-        ("BusySpin", WaitStrategy::BusySpin),
-        ("BackoffYield", WaitStrategy::BackoffYield),
-        ("Backoff", WaitStrategy::Backoff),
-        ("Park", WaitStrategy::Park),
-    ] {
-        let mut rows: Vec<(f64, f64, f64)> = (0..ROUNDS)
-            .map(|_| {
-                let (stop, hs) = spawn_external(ext);
-                let run = measure_with(
-                    2,
-                    OVER_BATCH,
-                    OVER_ITERS,
-                    || mpsc::channel::<u64>(CAP, strat),
-                    |tx: &mut mpsc::Sender<u64>, v| tx.send(v).is_ok(),
-                    |rx: &mut mpsc::Receiver<u64>| rx.recv().is_ok(),
-                );
-                let ops = stop_external(stop, hs);
-                let ext = ops as f64 / (run.wall_ns as f64 / 1e9);
-                (run.melem_per_s(), ext, run.cpu_ns_per_elem())
-            })
-            .collect();
-        rows.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-        let m = rows[rows.len() / 2];
         println!(
-            "{:<16} {:>9.2} {:>12.0} {:>11.0}% {:>12.1}",
-            name,
-            m.0,
-            m.1 / 1e6,
-            m.1 / baseline * 100.0,
-            m.2,
-        );
-    }
-
-    println!(
-        "\next kept = external throughput as a fraction of those threads \
+            "\next kept = external throughput as a fraction of those threads \
          running alone.\n           Below 100% is the channel taking cores from \
          the rest of the process."
-    );
+        );
     } // end external
 }
