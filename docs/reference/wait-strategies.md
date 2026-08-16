@@ -5,6 +5,9 @@ construction. It applies to both blocked directions: consumer-on-empty and
 producer-on-full. There is no trait to implement; callers cannot supply their
 own strategy. Per-variant rustdoc: `cargo doc --open`.
 
+For picking a variant, see
+[Choose the wait strategy](../how-to/choose-a-topology-and-wait-strategy.md#choose-the-wait-strategy).
+
 `spsc::channel` and `mpsc::channel` accept all four variants.
 `sharded::channel` accepts three: `BusySpin`, `Backoff`, and `BackoffYield`.
 Passing `Park` to `sharded::channel` panics at construction with a message
