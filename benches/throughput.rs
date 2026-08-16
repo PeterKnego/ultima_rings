@@ -2196,13 +2196,352 @@ fn sharded_idle_wall(c: &mut Criterion) {
     g.finish();
 }
 
+// ---------------------------------------------------------------------------
+// External fan-in baseline. Every `sharded` figure recorded so far compares
+// against this crate's own `mpsc`, so the flavor has no external number at
+// all (2026-08-16-sharded-fanin-survey.md). The survey found no Rust crate
+// shipping this shape as a channel, which means the honest comparator is not
+// another crate but **what a user would build instead**: N `rtrb` rings plus
+// a hand-rolled consumer sweep.
+//
+// Four cells at equal total buffered capacity (1024 slots, split n ways):
+//
+//   sharded          — this crate.
+//   rtrb_sticky      — N rtrb rings, hand-rolled sweep using the SAME policy
+//                      `sharded` uses (sticky cursor, VISIT_BUDGET items per
+//                      shard). Isolates what the packaging costs: if this
+//                      matches `sharded`, the module adds no overhead over
+//                      raw rings and its value is the semantics, not speed.
+//   rtrb_roundrobin  — N rtrb rings, naive one-item-per-shard sweep, which is
+//                      the loop most people write first. Against
+//                      `rtrb_sticky` this prices the sweep policy itself.
+//   crossbeam_select — N bounded crossbeam channels behind `Select`, the
+//                      ecosystem's standard answer to one-consumer-many-
+//                      producers. The Select is built once and reused, which
+//                      is its most favourable usage; `try_select` is used
+//                      rather than `select` so both sides poll, matching the
+//                      other cells' spin loops.
+//
+// Note the ordering asymmetry, in crossbeam's favour: `Select` is free to
+// pick any ready channel, so it has no per-producer FIFO obligation, while
+// the two sweep cells and `sharded` deliver each producer's values in order.
+// ---------------------------------------------------------------------------
+
+fn bakeoff_fanin(c: &mut Criterion) {
+    use ultima_rings::sharded;
+    const TOTAL_CAP: usize = 1024;
+    let mut g = c.benchmark_group("bakeoff_fanin");
+    g.throughput(Throughput::Elements(BATCH));
+
+    for producers in [2usize, 4] {
+        let per_shard = TOTAL_CAP / producers;
+        let per = BATCH / producers as u64;
+
+        g.bench_function(format!("sharded_p{producers}"), |b| {
+            b.iter_custom(|iters| {
+                let mut total = std::time::Duration::ZERO;
+                for _ in 0..iters {
+                    let (senders, mut rx) =
+                        sharded::channel::<u64>(producers, TOTAL_CAP, WaitStrategy::BusySpin);
+                    let barrier = Arc::new(Barrier::new(producers + 1));
+                    let mut handles = Vec::new();
+                    for mut tx in senders {
+                        let barrier = Arc::clone(&barrier);
+                        handles.push(thread::spawn(move || {
+                            barrier.wait();
+                            for i in 0..per {
+                                let mut v = i;
+                                loop {
+                                    match tx.try_send(v) {
+                                        Ok(()) => break,
+                                        Err(TrySendError::Full(b)) => {
+                                            v = b;
+                                            std::hint::spin_loop();
+                                        }
+                                        Err(TrySendError::Disconnected(_)) => return,
+                                    }
+                                }
+                            }
+                        }));
+                    }
+                    barrier.wait();
+                    let t = Instant::now();
+                    let mut got = 0u64;
+                    while got < BATCH {
+                        match rx.try_recv() {
+                            Ok(_) => got += 1,
+                            Err(TryRecvError::Empty) => std::hint::spin_loop(),
+                            Err(TryRecvError::Disconnected) => break,
+                        }
+                    }
+                    total += t.elapsed();
+                    for h in handles {
+                        h.join().unwrap();
+                    }
+                }
+                total
+            })
+        });
+
+        // N rtrb rings + the same sticky-cursor sweep sharded uses.
+        g.bench_function(format!("rtrb_sticky_p{producers}"), |b| {
+            b.iter_custom(|iters| {
+                let mut total = std::time::Duration::ZERO;
+                for _ in 0..iters {
+                    let mut prods = Vec::new();
+                    let mut cons = Vec::new();
+                    for _ in 0..producers {
+                        let (tx, rx) = rtrb::RingBuffer::<u64>::new(per_shard);
+                        prods.push(tx);
+                        cons.push(rx);
+                    }
+                    let barrier = Arc::new(Barrier::new(producers + 1));
+                    let mut handles = Vec::new();
+                    for mut tx in prods {
+                        let barrier = Arc::clone(&barrier);
+                        handles.push(thread::spawn(move || {
+                            barrier.wait();
+                            for i in 0..per {
+                                let mut v = i;
+                                while let Err(rtrb::PushError::Full(b)) = tx.push(v) {
+                                    v = b;
+                                    std::hint::spin_loop();
+                                }
+                            }
+                        }));
+                    }
+                    barrier.wait();
+                    let t = Instant::now();
+                    let mut got = 0u64;
+                    let mut cursor = 0usize;
+                    let mut budget = 0usize;
+                    let n = cons.len();
+                    while got < BATCH {
+                        if budget >= 32 {
+                            cursor = if cursor + 1 == n { 0 } else { cursor + 1 };
+                            budget = 0;
+                        }
+                        let mut found = false;
+                        for _ in 0..n {
+                            if cons[cursor].pop().is_ok() {
+                                budget += 1;
+                                got += 1;
+                                found = true;
+                                break;
+                            }
+                            cursor = if cursor + 1 == n { 0 } else { cursor + 1 };
+                            budget = 0;
+                        }
+                        if !found {
+                            std::hint::spin_loop();
+                        }
+                    }
+                    total += t.elapsed();
+                    for h in handles {
+                        h.join().unwrap();
+                    }
+                }
+                total
+            })
+        });
+
+        // Same rings and same sweep policy as `rtrb_sticky`, plus the
+        // aggregate-disconnect bookkeeping `sharded` performs internally: on
+        // every empty probe, ask whether that shard is finished (producer
+        // gone AND drained), count those per sweep, and stop when the whole
+        // sweep reports finished. This mirrors `Receiver::try_recv` including
+        // its lack of dead-shard memoization — sharded re-counts each sweep
+        // because a shard's finished state is stable, so re-checking is sound.
+        //
+        // `rtrb_sticky` against this cell prices the semantics; this cell
+        // against `sharded` prices the packaging, which is the split the
+        // plain `rtrb_sticky` comparison could not make.
+        g.bench_function(format!("rtrb_sticky_dc_p{producers}"), |b| {
+            b.iter_custom(|iters| {
+                let mut total = std::time::Duration::ZERO;
+                for _ in 0..iters {
+                    let mut prods = Vec::new();
+                    let mut cons = Vec::new();
+                    for _ in 0..producers {
+                        let (tx, rx) = rtrb::RingBuffer::<u64>::new(per_shard);
+                        prods.push(tx);
+                        cons.push(rx);
+                    }
+                    let barrier = Arc::new(Barrier::new(producers + 1));
+                    let mut handles = Vec::new();
+                    for mut tx in prods {
+                        let barrier = Arc::clone(&barrier);
+                        handles.push(thread::spawn(move || {
+                            barrier.wait();
+                            for i in 0..per {
+                                let mut v = i;
+                                while let Err(rtrb::PushError::Full(b)) = tx.push(v) {
+                                    v = b;
+                                    std::hint::spin_loop();
+                                }
+                            }
+                        }));
+                    }
+                    barrier.wait();
+                    let t = Instant::now();
+                    let mut got = 0u64;
+                    let mut cursor = 0usize;
+                    let mut budget = 0usize;
+                    let n = cons.len();
+                    while got < BATCH {
+                        if budget >= 32 {
+                            cursor = if cursor + 1 == n { 0 } else { cursor + 1 };
+                            budget = 0;
+                        }
+                        let mut found = false;
+                        let mut finished = 0usize;
+                        for _ in 0..n {
+                            match cons[cursor].pop() {
+                                Ok(_) => {
+                                    budget += 1;
+                                    got += 1;
+                                    found = true;
+                                    break;
+                                }
+                                Err(rtrb::PopError::Empty) => {
+                                    if cons[cursor].is_abandoned() && cons[cursor].is_empty() {
+                                        finished += 1;
+                                    }
+                                }
+                            }
+                            cursor = if cursor + 1 == n { 0 } else { cursor + 1 };
+                            budget = 0;
+                        }
+                        if !found {
+                            if finished == n {
+                                break;
+                            }
+                            std::hint::spin_loop();
+                        }
+                    }
+                    total += t.elapsed();
+                    for h in handles {
+                        h.join().unwrap();
+                    }
+                }
+                total
+            })
+        });
+
+        // N rtrb rings + the naive loop: one item per shard, then move on.
+        g.bench_function(format!("rtrb_roundrobin_p{producers}"), |b| {
+            b.iter_custom(|iters| {
+                let mut total = std::time::Duration::ZERO;
+                for _ in 0..iters {
+                    let mut prods = Vec::new();
+                    let mut cons = Vec::new();
+                    for _ in 0..producers {
+                        let (tx, rx) = rtrb::RingBuffer::<u64>::new(per_shard);
+                        prods.push(tx);
+                        cons.push(rx);
+                    }
+                    let barrier = Arc::new(Barrier::new(producers + 1));
+                    let mut handles = Vec::new();
+                    for mut tx in prods {
+                        let barrier = Arc::clone(&barrier);
+                        handles.push(thread::spawn(move || {
+                            barrier.wait();
+                            for i in 0..per {
+                                let mut v = i;
+                                while let Err(rtrb::PushError::Full(b)) = tx.push(v) {
+                                    v = b;
+                                    std::hint::spin_loop();
+                                }
+                            }
+                        }));
+                    }
+                    barrier.wait();
+                    let t = Instant::now();
+                    let mut got = 0u64;
+                    while got < BATCH {
+                        let mut any = false;
+                        for rx in cons.iter_mut() {
+                            if rx.pop().is_ok() {
+                                got += 1;
+                                any = true;
+                            }
+                        }
+                        if !any {
+                            std::hint::spin_loop();
+                        }
+                    }
+                    total += t.elapsed();
+                    for h in handles {
+                        h.join().unwrap();
+                    }
+                }
+                total
+            })
+        });
+
+        // N bounded crossbeam channels behind a reused Select.
+        g.bench_function(format!("crossbeam_select_p{producers}"), |b| {
+            b.iter_custom(|iters| {
+                let mut total = std::time::Duration::ZERO;
+                for _ in 0..iters {
+                    let mut txs = Vec::new();
+                    let mut rxs = Vec::new();
+                    for _ in 0..producers {
+                        let (tx, rx) = crossbeam_channel::bounded::<u64>(per_shard);
+                        txs.push(tx);
+                        rxs.push(rx);
+                    }
+                    let barrier = Arc::new(Barrier::new(producers + 1));
+                    let mut handles = Vec::new();
+                    for tx in txs {
+                        let barrier = Arc::clone(&barrier);
+                        handles.push(thread::spawn(move || {
+                            barrier.wait();
+                            for i in 0..per {
+                                if tx.send(i).is_err() {
+                                    return;
+                                }
+                            }
+                        }));
+                    }
+                    barrier.wait();
+                    let t = Instant::now();
+                    let mut sel = crossbeam_channel::Select::new();
+                    for rx in rxs.iter() {
+                        sel.recv(rx);
+                    }
+                    let mut got = 0u64;
+                    while got < BATCH {
+                        match sel.try_select() {
+                            Ok(op) => {
+                                let i = op.index();
+                                if op.recv(&rxs[i]).is_ok() {
+                                    got += 1;
+                                }
+                            }
+                            Err(_) => std::hint::spin_loop(),
+                        }
+                    }
+                    total += t.elapsed();
+                    for h in handles {
+                        h.join().unwrap();
+                    }
+                }
+                total
+            })
+        });
+    }
+    g.finish();
+}
+
 criterion_group!(
     bakeoff_sharded,
     bakeoff_sharded_mpsc,
     bakeoff_sharded_string,
     sharded_shard_ladder,
     sharded_skew,
-    sharded_idle_wall
+    sharded_idle_wall,
+    bakeoff_fanin
 );
 
 criterion_main!(benches, bakeoff, bakeoff_sharded);

@@ -1,0 +1,52 @@
+=== bakeoff smt2x2 ===
+### round=1 point=smt2x2
+bakeoff_fanin/sharded_p2
+                        thrpt:  [197.83 Melem/s 198.21 Melem/s 198.53 Melem/s]
+bakeoff_fanin/rtrb_sticky_p2
+                        thrpt:  [242.25 Melem/s 243.53 Melem/s 244.50 Melem/s]
+bakeoff_fanin/rtrb_roundrobin_p2
+                        thrpt:  [188.97 Melem/s 192.35 Melem/s 195.80 Melem/s]
+bakeoff_fanin/crossbeam_select_p2
+                        thrpt:  [6.7880 Melem/s 6.7933 Melem/s 6.7994 Melem/s]
+bakeoff_fanin/sharded_p4
+                        thrpt:  [85.190 Melem/s 87.680 Melem/s 90.363 Melem/s]
+bakeoff_fanin/rtrb_sticky_p4
+                        thrpt:  [84.831 Melem/s 86.962 Melem/s 89.217 Melem/s]
+bakeoff_fanin/rtrb_roundrobin_p4
+                        thrpt:  [18.715 Melem/s 19.316 Melem/s 19.952 Melem/s]
+bakeoff_fanin/crossbeam_select_p4
+                        thrpt:  [6.4463 Melem/s 6.4945 Melem/s 6.5392 Melem/s]
+### round=2 point=smt2x2
+bakeoff_fanin/sharded_p2
+                        thrpt:  [211.31 Melem/s 211.67 Melem/s 212.03 Melem/s]
+bakeoff_fanin/rtrb_sticky_p2
+                        thrpt:  [250.15 Melem/s 250.47 Melem/s 250.77 Melem/s]
+bakeoff_fanin/rtrb_roundrobin_p2
+                        thrpt:  [189.57 Melem/s 191.61 Melem/s 193.57 Melem/s]
+bakeoff_fanin/crossbeam_select_p2
+                        thrpt:  [6.7176 Melem/s 6.8137 Melem/s 6.9126 Melem/s]
+bakeoff_fanin/sharded_p4
+                        thrpt:  [76.067 Melem/s 78.612 Melem/s 81.327 Melem/s]
+bakeoff_fanin/rtrb_sticky_p4
+                        thrpt:  [82.814 Melem/s 85.027 Melem/s 87.561 Melem/s]
+bakeoff_fanin/rtrb_roundrobin_p4
+                        thrpt:  [13.125 Melem/s 13.434 Melem/s 13.752 Melem/s]
+bakeoff_fanin/crossbeam_select_p4
+                        thrpt:  [6.6668 Melem/s 6.7268 Melem/s 6.7851 Melem/s]
+### round=3 point=smt2x2
+bakeoff_fanin/sharded_p2
+                        thrpt:  [184.29 Melem/s 184.58 Melem/s 184.83 Melem/s]
+bakeoff_fanin/rtrb_sticky_p2
+                        thrpt:  [223.93 Melem/s 224.30 Melem/s 224.68 Melem/s]
+bakeoff_fanin/rtrb_roundrobin_p2
+                        thrpt:  [199.11 Melem/s 202.29 Melem/s 205.50 Melem/s]
+bakeoff_fanin/crossbeam_select_p2
+                        thrpt:  [5.5875 Melem/s 5.5975 Melem/s 5.6100 Melem/s]
+bakeoff_fanin/sharded_p4
+                        thrpt:  [84.960 Melem/s 87.247 Melem/s 89.624 Melem/s]
+bakeoff_fanin/rtrb_sticky_p4
+                        thrpt:  [79.319 Melem/s 81.974 Melem/s 84.815 Melem/s]
+bakeoff_fanin/rtrb_roundrobin_p4
+                        thrpt:  [16.210 Melem/s 16.713 Melem/s 17.252 Melem/s]
+bakeoff_fanin/crossbeam_select_p4
+                        thrpt:  [6.7641 Melem/s 6.8256 Melem/s 6.8840 Melem/s]

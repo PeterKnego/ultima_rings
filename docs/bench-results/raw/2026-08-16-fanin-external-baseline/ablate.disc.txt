@@ -1,0 +1,29 @@
+### variant=disc flags=--cfg ablate_disc
+    Finished `release` profile [optimized] target(s) in 10.16s
+### round=1 variant=disc
+bakeoff_fanin/sharded_p2
+                        thrpt:  [136.99 Melem/s 137.39 Melem/s 137.77 Melem/s]
+bakeoff_fanin/rtrb_sticky_dc_p2
+                        thrpt:  [166.73 Melem/s 167.40 Melem/s 168.01 Melem/s]
+bakeoff_fanin/sharded_p4
+                        thrpt:  [142.20 Melem/s 142.94 Melem/s 143.73 Melem/s]
+bakeoff_fanin/rtrb_sticky_dc_p4
+                        thrpt:  [168.27 Melem/s 169.10 Melem/s 169.90 Melem/s]
+### round=2 variant=disc
+bakeoff_fanin/sharded_p2
+                        thrpt:  [147.49 Melem/s 148.69 Melem/s 149.97 Melem/s]
+bakeoff_fanin/rtrb_sticky_dc_p2
+                        thrpt:  [176.65 Melem/s 180.48 Melem/s 184.28 Melem/s]
+bakeoff_fanin/sharded_p4
+                        thrpt:  [142.75 Melem/s 143.69 Melem/s 144.65 Melem/s]
+bakeoff_fanin/rtrb_sticky_dc_p4
+                        thrpt:  [160.00 Melem/s 161.35 Melem/s 162.75 Melem/s]
+### round=3 variant=disc
+bakeoff_fanin/sharded_p2
+                        thrpt:  [158.42 Melem/s 159.20 Melem/s 159.86 Melem/s]
+bakeoff_fanin/rtrb_sticky_dc_p2
+                        thrpt:  [195.45 Melem/s 197.91 Melem/s 200.30 Melem/s]
+bakeoff_fanin/sharded_p4
+                        thrpt:  [139.14 Melem/s 139.75 Melem/s 140.41 Melem/s]
+bakeoff_fanin/rtrb_sticky_dc_p4
+                        thrpt:  [202.51 Melem/s 203.49 Melem/s 204.49 Melem/s]
