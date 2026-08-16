@@ -53,6 +53,17 @@ times faster than crossbeam?", has the widest error bars of any question the
 program can ask. The honest answer is a floor quoted against crossbeam's
 best day, which is how the README states it.
 
+It would be comfortable to conclude that noise is something other crates
+have. It isn't. Push this crate's own `mpsc` past the core count — sixteen
+producers on sixteen cores, then thirty-two, then sixty-four — and its cells
+start swinging by a factor of three between rounds of the same session
+([`2026-08-16-sharded-ladder-skew.md`](../bench-results/2026-08-16-sharded-ladder-skew.md)).
+The reason is the same mechanism in a different costume: once spinning
+producers outnumber the CPUs that can run them, throughput depends on which
+threads the scheduler happens to favour, and that is not a property of the
+code. The reports handle those rows the way they handle crossbeam's — quote
+a direction, refuse a point estimate, and say which cells cannot support one.
+
 ## Assumptions are measured here, including flattering ones
 
 Twice the program caught its own thumb on the scale. Three bake-offs
@@ -66,6 +77,19 @@ when the crate shipping exactly that design measured well behind. The
 pattern to trust is not that the numbers always flatter the crate — they
 don't — but that each assumption eventually got a dated experiment, and the
 unflattering results stayed in the record.
+
+That `drain` finding has since acquired an instructive twist. Batched
+consumption lost by 10% on `spsc`, and the guidance written from it — don't
+reach for `drain` expecting speed — was correct for the configuration it was
+measured in and wrong as a general claim. On the `sharded` flavor the same
+API won by 6.1×, because there the consumer pays per-item sweep bookkeeping
+that batching amortizes, and the per-item path was the bottleneck all along
+([`2026-08-16-sharded-string-drain.md`](../bench-results/2026-08-16-sharded-string-drain.md)).
+One API, two flavors, opposite conclusions — both measured, both true. It is
+a useful reminder that a benchmark result is a fact about a configuration,
+and the sentence a reader carries away from it is usually broader than the
+experiment that produced it. The scope creeps in the retelling, not in the
+data.
 
 ## What to trust, and how far
 

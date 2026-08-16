@@ -23,7 +23,7 @@ Open `Cargo.toml` and add the dependency:
 
 ```toml
 [dependencies]
-ultima_rings = "0.1"
+ultima_rings = "0.2"
 ```
 
 ## 2. Send one value through a ring

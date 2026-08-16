@@ -1,9 +1,10 @@
 # ultima_rings documentation
 
-Documentation for `ultima_rings`, a bounded lock-free SPSC/MPSC ring-channel
-crate. It is organized in four kinds — a hands-on lesson, goal-oriented
-guides, dry facts, and background reading — so start with the kind that
-matches what you need right now.
+Documentation for `ultima_rings`, a bounded lock-free ring-channel crate in
+three flavors — `spsc`, `mpsc`, and the fixed-producer-set `sharded`. It is
+organized in four kinds — a hands-on lesson, goal-oriented guides, dry
+facts, and background reading — so start with the kind that matches what
+you need right now.
 
 ## Learn it
 
@@ -15,8 +16,9 @@ backpressure and clean shutdown along the way. Overview:
 ## Get something done
 
 The [how-to guides](how-to/README.md) serve specific jobs: choosing a
-topology and wait strategy, handling a full ring, shutting down without
-losing values, batching consumption, and placing threads for cache locality.
+topology and wait strategy, fanning in from a fixed set of producers,
+handling a full ring, shutting down without losing values, batching
+consumption, and placing threads for cache locality.
 
 ## Look something up
 

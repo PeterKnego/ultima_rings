@@ -8,6 +8,8 @@ Setting up a channel:
 - [How to choose a topology and wait strategy](choose-a-topology-and-wait-strategy.md)
   — both are fixed at construction; pick them for your latency and CPU
   budget.
+- [How to fan in from a fixed set of producers](fan-in-from-a-fixed-producer-set.md)
+  — give each known producer its own ring so they never contend.
 
 Running under load:
 

@@ -5,6 +5,12 @@ construction. It applies to both blocked directions: consumer-on-empty and
 producer-on-full. There is no trait to implement; callers cannot supply their
 own strategy. Per-variant rustdoc: `cargo doc --open`.
 
+`spsc::channel` and `mpsc::channel` accept all four variants.
+`sharded::channel` accepts three: `BusySpin`, `Backoff`, and `BackoffYield`.
+Passing `Park` to `sharded::channel` panics at construction with a message
+naming the three accepted variants (`src/sharded.rs`). See
+[channel types](channels.md) for the full per-flavor matrix.
+
 ## Behavior table
 
 | Variant | Waiting side does | Idle CPU (one blocked side) | Wake granularity / latency | Cost to the productive side |
@@ -27,6 +33,9 @@ Ladder constants (`src/wait.rs`): `SPINS = 10`, `YIELDS = 20`,
 - `BusySpin`, `BackoffYield`, and `Backoff` are self-waking: the other side
   never needs to notify. Only `Park` requires the productive side to
   participate in wakes.
+- The self-waking three are exactly the variants `sharded::channel` accepts.
+  A `sharded` consumer waits between whole-shard sweeps rather than on any
+  one shard, and no shard notifies it (`src/sharded.rs`).
 
 ## Provenance
 

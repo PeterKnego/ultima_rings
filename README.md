@@ -48,7 +48,8 @@ Full documentation lives under [`docs/`](docs/README.md), organized by need:
 - [Your first pipeline](docs/tutorials/your-first-pipeline.md) — a ten-minute
   hands-on lesson building a two-thread pipeline.
 - [How-to guides](docs/how-to/README.md) — choosing a topology and strategy,
-  backpressure, clean shutdown, batching, and thread placement.
+  fanning in from a fixed producer set, backpressure, clean shutdown,
+  batching, and thread placement.
 - [Reference](docs/reference/README.md) — channel guarantees, the
   wait-strategy table, and error/disconnect semantics; per-item API docs via
   `cargo doc --open`.
