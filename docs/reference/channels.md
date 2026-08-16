@@ -3,6 +3,9 @@
 Cross-cutting facts about the crate's channel flavors. The canonical per-item
 API reference is the rustdoc: `cargo doc --open`.
 
+For picking a flavor, see
+[Choose the topology](../how-to/choose-a-topology-and-wait-strategy.md#choose-the-topology).
+
 ## The three flavors
 
 | | `spsc` | `mpsc` | `sharded` |
