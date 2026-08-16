@@ -1,9 +1,7 @@
 # How-to guides
 
-Goal-oriented guides for working with the crate. Each one serves a job you
-came with, assumes you know Rust and threads, and links to the
-[reference](../reference/README.md) for exhaustive facts rather than
-repeating them.
+Goal-oriented guides for working with the crate. Assumes you know Rust and threads, each links to the
+[reference](../reference/README.md) for exhaustive facts.
 
 Setting up a channel:
 
