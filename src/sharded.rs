@@ -1,6 +1,6 @@
 //! **Experimental.** Sharded MPSC: one SPSC ring per producer, consumer
 //! round-robins. Gated behind the `experimental-sharded` feature; not part of
-//! the stable API and not loom-modeled (see below).
+//! the stable API.
 //!
 //! Each producer owns a private [`crate::spsc`] ring, so a send is a single
 //! Release store with no CAS and no cross-producer contention — unlike
@@ -28,7 +28,9 @@
 //!
 //! This module declares no atomics and contains no `unsafe`; every
 //! memory-ordering edge belongs to [`crate::spsc`], which `tests/loom.rs`
-//! already models. See
+//! models. The composition on top — the sweep's disconnect counting under
+//! concurrent sends and drops — is modeled there too
+//! (`sharded_composition`). See
 //! `docs/superpowers/specs/2026-08-07-sharded-mpsc-design.md`.
 
 use crate::spsc;

@@ -21,7 +21,7 @@ thingbuf = "0.1.6"
 
 [features]
 # Experimental sharded MPSC prototype (N x SPSC + round-robin consumer).
-# Default off: not part of the stable API, BusySpin-only, no loom models.
+# Default off: not part of the stable API, BusySpin-only.
 experimental-sharded = []
 
 [target.'cfg(loom)'.dependencies]

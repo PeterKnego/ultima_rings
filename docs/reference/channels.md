@@ -17,7 +17,7 @@ API reference is the rustdoc: `cargo doc --open`.
 | Wait strategies | all four | all four | `BusySpin` only (any other panics) |
 | Availability | always | always | feature `experimental-sharded` |
 
-`sharded` is a prototype: `BusySpin`-only, no loom models, not a stable API
+`sharded` is a prototype: `BusySpin`-only, not a stable API
 (see the feature-flag note in `Cargo.toml`).
 
 ## Capacity rules

@@ -1150,6 +1150,73 @@ fn sharded_skew(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
+// Heap-owning payload for the sharded prototype — the cell
+// 2026-08-15-bakeoff-rig.md flagged as missing ("disruptor and sharded have
+// no String cells"). Identical harness, MSG, STR_BATCH, and 1024 total
+// capacity as `bakeoff_mpsc_string`, so the sharded/mpsc ratio can be read
+// on a payload with a destructor and a per-element allocation, where every
+// u64 cell so far measured a path whose `Slot::drop` does nothing.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "experimental-sharded")]
+fn bakeoff_sharded_string(c: &mut Criterion) {
+    use ultima_rings::sharded;
+    let mut g = c.benchmark_group("bakeoff_sharded_string");
+    g.throughput(Throughput::Elements(STR_BATCH));
+    g.bench_function("ultima_sharded_2_producers", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (senders, mut rx) = sharded::channel::<String>(2, 1024, WaitStrategy::BusySpin);
+                let barrier = Arc::new(Barrier::new(3));
+                let mut handles = Vec::new();
+                for mut tx in senders {
+                    let barrier = Arc::clone(&barrier);
+                    handles.push(thread::spawn(move || {
+                        barrier.wait();
+                        for _ in 0..STR_BATCH / 2 {
+                            let mut v = String::from(MSG);
+                            loop {
+                                match tx.try_send(v) {
+                                    Ok(()) => break,
+                                    Err(TrySendError::Full(b)) => {
+                                        v = b;
+                                        std::hint::spin_loop();
+                                    }
+                                    Err(TrySendError::Disconnected(_)) => return,
+                                }
+                            }
+                        }
+                    }));
+                }
+                barrier.wait();
+                let t = Instant::now();
+                let mut got = 0u64;
+                loop {
+                    match rx.try_recv() {
+                        Ok(v) => {
+                            drop(v);
+                            got += 1;
+                        }
+                        Err(TryRecvError::Empty) => std::hint::spin_loop(),
+                        Err(TryRecvError::Disconnected) => break,
+                    }
+                    if got == STR_BATCH {
+                        break;
+                    }
+                }
+                total += t.elapsed();
+                for h in handles {
+                    h.join().unwrap();
+                }
+            }
+            total
+        })
+    });
+    g.finish();
+}
+
+// ---------------------------------------------------------------------------
 // Park-mode MPSC bake-off. The other MPSC cells all drive the non-blocking
 // `try_*` API with a hand-rolled spin, so nothing there exercises either
 // crate's blocking path — a gap the v2 spec flagged
@@ -1931,6 +1998,7 @@ criterion_group!(
 criterion_group!(
     bakeoff_sharded,
     bakeoff_sharded_mpsc,
+    bakeoff_sharded_string,
     sharded_shard_ladder,
     sharded_skew
 );

@@ -79,6 +79,68 @@ fn last_sender_drop_from_thread_wakes_parked_receiver() {
     }
 }
 
+/// The same crossbeam corner cases against the sharded prototype, where they
+/// apply. Global-FIFO cases don't (sharded promises per-producer FIFO only),
+/// and Park cases don't (sharded is BusySpin-only); the disconnect and drop
+/// accounting contracts are identical and are what this module checks.
+#[cfg(feature = "experimental-sharded")]
+mod sharded {
+    use super::*;
+    use ultima_rings::sharded;
+
+    /// crossbeam `try_recv_closed_with_data`: data in any shard survives all
+    /// senders disconnecting, in whichever order they drop.
+    #[test]
+    fn try_recv_closed_with_data() {
+        let (mut senders, mut rx) = sharded::channel::<u32>(2, 8, WaitStrategy::BusySpin);
+        senders[1].try_send(1).unwrap();
+        drop(senders);
+        assert_eq!(rx.try_recv(), Ok(1));
+        assert_eq!(rx.try_recv(), Err(TryRecvError::Disconnected));
+    }
+
+    /// crossbeam `drop_unreceived` / `drop_full`: values left in the shards
+    /// are dropped exactly once when the channel dies, spread unevenly across
+    /// rings and including a completely full one.
+    #[test]
+    fn drop_full_rings_drop_all_values_once() {
+        #[derive(Debug)]
+        struct Counted(Arc<AtomicUsize>);
+        impl Drop for Counted {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        for (in_shard0, in_shard1) in [(1usize, 0usize), (4, 2), (4, 4)] {
+            let drops = Arc::new(AtomicUsize::new(0));
+            let (mut senders, rx) = sharded::channel::<Counted>(2, 8, WaitStrategy::BusySpin);
+            for _ in 0..in_shard0 {
+                senders[0].try_send(Counted(Arc::clone(&drops))).unwrap();
+            }
+            for _ in 0..in_shard1 {
+                senders[1].try_send(Counted(Arc::clone(&drops))).unwrap();
+            }
+            drop(rx);
+            drop(senders);
+            assert_eq!(drops.load(Ordering::Relaxed), in_shard0 + in_shard1);
+        }
+    }
+
+    /// crossbeam `send_after_disconnect`: try_send fails and returns the
+    /// value once the receiver is gone — from every shard, not just one.
+    #[test]
+    fn send_after_disconnect_returns_value() {
+        let (mut senders, rx) = sharded::channel::<String>(2, 8, WaitStrategy::BusySpin);
+        drop(rx);
+        for tx in senders.iter_mut() {
+            assert_eq!(
+                tx.try_send("t".into()),
+                Err(TrySendError::Disconnected("t".to_string()))
+            );
+        }
+    }
+}
+
 /// crossbeam `drops` fuzz: randomized produce/consume/close with exact
 /// drop accounting. Deterministic LCG, no rand dep.
 #[test]
