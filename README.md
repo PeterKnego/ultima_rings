@@ -199,7 +199,7 @@ What the program supports, each claim with its conditions:
   2.05–2.35× ahead — so this README quotes none.
 - **The sharded prototype scales** — 1.68× the production `mpsc` on the dev box,
   5.71–6.20× on the Xeon, where the shared claim cursor it deletes is the bottleneck.
-  It is feature-gated, `BusySpin`-only, and gives up global FIFO
+  It is feature-gated, takes every wait strategy but `Park`, and gives up global FIFO
   and a global capacity bound; a direction, not a shipping path.
 
 Two findings behind the MPSC row are kept here because earlier revisions of this README

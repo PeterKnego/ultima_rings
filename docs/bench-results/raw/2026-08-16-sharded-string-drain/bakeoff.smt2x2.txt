@@ -1,0 +1,16 @@
+=== bakeoff smt2x2 ===
+### round=1 point=smt2x2
+bakeoff_sharded_mpsc/ultima_sharded_2_producers
+                        thrpt:  [211.35 Melem/s 213.46 Melem/s 214.75 Melem/s]
+bakeoff_sharded_mpsc/ultima_sharded_drain_2_producers
+                        thrpt:  [657.86 Melem/s 684.37 Melem/s 705.10 Melem/s]
+### round=2 point=smt2x2
+bakeoff_sharded_mpsc/ultima_sharded_2_producers
+                        thrpt:  [192.46 Melem/s 192.85 Melem/s 193.21 Melem/s]
+bakeoff_sharded_mpsc/ultima_sharded_drain_2_producers
+                        thrpt:  [699.89 Melem/s 701.90 Melem/s 703.62 Melem/s]
+### round=3 point=smt2x2
+bakeoff_sharded_mpsc/ultima_sharded_2_producers
+                        thrpt:  [208.51 Melem/s 209.22 Melem/s 209.89 Melem/s]
+bakeoff_sharded_mpsc/ultima_sharded_drain_2_producers
+                        thrpt:  [630.54 Melem/s 633.91 Melem/s 637.46 Melem/s]

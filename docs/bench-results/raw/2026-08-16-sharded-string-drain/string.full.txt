@@ -1,0 +1,34 @@
+=== bakeoff full ===
+### round=1 point=full
+bakeoff_mpsc_string/ultima
+                        thrpt:  [7.8240 Melem/s 7.8565 Melem/s 7.8889 Melem/s]
+bakeoff_mpsc_string/crossbeam
+                        thrpt:  [4.6344 Melem/s 4.6573 Melem/s 4.6776 Melem/s]
+bakeoff_mpsc_string/thingbuf
+                        thrpt:  [3.6190 Melem/s 3.6290 Melem/s 3.6409 Melem/s]
+bakeoff_mpsc_string/thingbuf_ref
+                        thrpt:  [3.3879 Melem/s 3.3984 Melem/s 3.4090 Melem/s]
+bakeoff_sharded_string/ultima_sharded_2_producers
+                        thrpt:  [10.133 Melem/s 10.173 Melem/s 10.214 Melem/s]
+### round=2 point=full
+bakeoff_mpsc_string/ultima
+                        thrpt:  [7.4090 Melem/s 7.4401 Melem/s 7.4715 Melem/s]
+bakeoff_mpsc_string/crossbeam
+                        thrpt:  [4.3346 Melem/s 4.3561 Melem/s 4.3780 Melem/s]
+bakeoff_mpsc_string/thingbuf
+                        thrpt:  [3.8033 Melem/s 3.8247 Melem/s 3.8513 Melem/s]
+bakeoff_mpsc_string/thingbuf_ref
+                        thrpt:  [3.4592 Melem/s 3.4663 Melem/s 3.4732 Melem/s]
+bakeoff_sharded_string/ultima_sharded_2_producers
+                        thrpt:  [10.235 Melem/s 10.337 Melem/s 10.409 Melem/s]
+### round=3 point=full
+bakeoff_mpsc_string/ultima
+                        thrpt:  [7.0748 Melem/s 7.0895 Melem/s 7.1043 Melem/s]
+bakeoff_mpsc_string/crossbeam
+                        thrpt:  [5.2498 Melem/s 5.2687 Melem/s 5.2874 Melem/s]
+bakeoff_mpsc_string/thingbuf
+                        thrpt:  [3.8257 Melem/s 3.8544 Melem/s 3.8826 Melem/s]
+bakeoff_mpsc_string/thingbuf_ref
+                        thrpt:  [3.1848 Melem/s 3.1935 Melem/s 3.2023 Melem/s]
+bakeoff_sharded_string/ultima_sharded_2_producers
+                        thrpt:  [10.904 Melem/s 10.953 Melem/s 11.001 Melem/s]

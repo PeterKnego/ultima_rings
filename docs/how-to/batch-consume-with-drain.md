@@ -42,3 +42,12 @@ On a saturated pipeline, single-item `try_recv` measured ~10% *faster* than
 [`2026-08-14-bakeoff-v4.md`](../bench-results/2026-08-14-bakeoff-v4.md)).
 Reach for `drain` when you need its shape — bounded work per turn, batched
 cursor publication — not as a default speedup.
+
+## Sharded: one visit per shard per call
+
+`sharded::Receiver::drain` (feature `experimental-sharded`) sweeps the shards
+from the current cursor, visiting each **at most once per call**, so a single
+call stays finite even while producers keep refilling — loop the call for a
+continuous drain. If `max` runs out mid-shard the cursor holds there, and the
+next call continues that shard first. The return-`0` ambiguity and its
+`try_recv` pairing are the same as above.

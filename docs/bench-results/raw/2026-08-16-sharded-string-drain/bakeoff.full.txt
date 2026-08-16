@@ -1,0 +1,16 @@
+=== bakeoff full ===
+### round=1 point=full
+bakeoff_sharded_mpsc/ultima_sharded_2_producers
+                        thrpt:  [121.61 Melem/s 123.14 Melem/s 124.91 Melem/s]
+bakeoff_sharded_mpsc/ultima_sharded_drain_2_producers
+                        thrpt:  [822.22 Melem/s 828.52 Melem/s 834.97 Melem/s]
+### round=2 point=full
+bakeoff_sharded_mpsc/ultima_sharded_2_producers
+                        thrpt:  [126.19 Melem/s 127.05 Melem/s 127.89 Melem/s]
+bakeoff_sharded_mpsc/ultima_sharded_drain_2_producers
+                        thrpt:  [767.42 Melem/s 775.68 Melem/s 783.66 Melem/s]
+### round=3 point=full
+bakeoff_sharded_mpsc/ultima_sharded_2_producers
+                        thrpt:  [137.30 Melem/s 138.59 Melem/s 139.74 Melem/s]
+bakeoff_sharded_mpsc/ultima_sharded_drain_2_producers
+                        thrpt:  [745.59 Melem/s 757.34 Melem/s 768.67 Melem/s]

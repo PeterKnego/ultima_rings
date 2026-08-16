@@ -984,6 +984,55 @@ fn bakeoff_sharded_mpsc(c: &mut Criterion) {
             total
         })
     });
+    // Batched consume. The 2026-08-16 ladder/skew session put every sharded
+    // cell in a 91-124 Melem/s band at 16 cores — the single consumer's
+    // per-item try_recv rate, not the producers, is the bound everywhere.
+    // This cell is the same harness on Receiver::drain, which publishes each
+    // shard's head once per batch instead of once per item.
+    g.bench_function("ultima_sharded_drain_2_producers", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let (senders, mut rx) = sharded::channel::<u64>(2, 1024, WaitStrategy::BusySpin);
+                let barrier = Arc::new(Barrier::new(3));
+                let mut handles = Vec::new();
+                for mut tx in senders {
+                    let barrier = Arc::clone(&barrier);
+                    handles.push(thread::spawn(move || {
+                        barrier.wait();
+                        for i in 0..BATCH / 2 {
+                            let mut v = i;
+                            loop {
+                                match tx.try_send(v) {
+                                    Ok(()) => break,
+                                    Err(TrySendError::Full(b)) => {
+                                        v = b;
+                                        std::hint::spin_loop();
+                                    }
+                                    Err(TrySendError::Disconnected(_)) => return,
+                                }
+                            }
+                        }
+                    }));
+                }
+                barrier.wait();
+                let t = Instant::now();
+                let mut got = 0u64;
+                while got < BATCH {
+                    let n = rx.drain(usize::MAX, |_| {}) as u64;
+                    got += n;
+                    if n == 0 {
+                        std::hint::spin_loop();
+                    }
+                }
+                total += t.elapsed();
+                for h in handles {
+                    h.join().unwrap();
+                }
+            }
+            total
+        })
+    });
     g.finish();
 }
 

@@ -55,12 +55,14 @@ const VISIT_BUDGET: usize = 32;
 /// the resulting per-shard capacity is a positive power of two (which, for a
 /// power-of-two `total_cap`, means `n_shards` must itself be a power of two).
 ///
-/// Also panics if `strategy` is not [`WaitStrategy::BusySpin`]. This module
-/// has no blocking `recv` at the sharded layer, so nothing here ever parks;
-/// `WaitStrategy::Park` would still compile (each shard is a plain
-/// [`crate::spsc`] channel) but would silently pay a `SeqCst` fence plus a
-/// parker wake on every `try_send` for zero benefit. Rejecting it loudly
-/// beats a quiet 2x-slower footgun.
+/// Also panics if `strategy` is [`WaitStrategy::Park`]. The three self-waking
+/// strategies (`BusySpin`, `Backoff`, `BackoffYield`) compose for free: a
+/// blocked side wakes itself, so N independent rings need no shared plumbing.
+/// `Park` does not compose — a consumer parked through one shard's parker
+/// would sleep through every other shard's publish, and fixing that would
+/// need a cross-shard parker registered with all N rings, putting a `SeqCst`
+/// fence plus a wake on every send: exactly the per-publish cost this design
+/// exists to delete.
 pub fn channel<T: Send>(
     n_shards: usize,
     total_cap: usize,
@@ -78,10 +80,11 @@ pub fn channel<T: Send>(
          must be a positive power of two"
     );
     assert!(
-        matches!(strategy, WaitStrategy::BusySpin),
-        "sharded::channel only supports WaitStrategy::BusySpin \
-         (got {strategy:?}); there is no blocking recv at the sharded \
-         layer, so Park would pay a per-item parker wake for no benefit"
+        !matches!(strategy, WaitStrategy::Park),
+        "sharded::channel does not support WaitStrategy::Park: there is no \
+         cross-shard parker, so a consumer parked on one shard would sleep \
+         through the others' publishes. Use BusySpin, Backoff, or \
+         BackoffYield (all self-waking)."
     );
     let mut senders = Vec::with_capacity(n_shards);
     let mut shards = Vec::with_capacity(n_shards);
@@ -96,6 +99,7 @@ pub fn channel<T: Send>(
             shards,
             cursor: 0,
             budget: 0,
+            strategy,
         },
     )
 }
@@ -116,6 +120,18 @@ impl<T: Send> Sender<T> {
     pub fn try_send(&mut self, v: T) -> Result<(), TrySendError<T>> {
         self.inner.try_send(v)
     }
+
+    /// Push, blocking per the channel's wait strategy while **this shard** is
+    /// full — other shards' occupancy is irrelevant, the same per-shard bound
+    /// as [`Sender::try_send`]. Fails only when the receiver disconnects,
+    /// returning the value.
+    ///
+    /// Delegates to [`crate::spsc::Sender::send`]: the wait ladder is the
+    /// shard's own, and with the self-waking strategies this constructor
+    /// accepts it costs the consumer nothing.
+    pub fn send(&mut self, v: T) -> Result<(), crate::SendError<T>> {
+        self.inner.send(v)
+    }
 }
 
 /// The single consumer, sweeping all shards with a sticky cursor.
@@ -123,6 +139,7 @@ pub struct Receiver<T: Send> {
     shards: Vec<spsc::Receiver<T>>,
     cursor: usize,
     budget: usize,
+    strategy: WaitStrategy,
 }
 
 impl<T: Send> Receiver<T> {
@@ -164,6 +181,64 @@ impl<T: Send> Receiver<T> {
         }
     }
 
+    /// Consume up to `max` currently-available items across all shards,
+    /// visiting each shard at most once, sweeping from the current cursor.
+    /// Returns the count consumed.
+    ///
+    /// Each shard's take goes through [`crate::spsc::Receiver::drain`], so
+    /// the shared head is published once per shard, not once per item — the
+    /// batched-consume path. "At most once per shard" is the bound that keeps
+    /// one call finite while producers keep refilling; loop the call for a
+    /// continuous drain.
+    ///
+    /// Returns 0 both when every shard is empty and after every sender has
+    /// disconnected; pair with [`Receiver::try_recv`] to distinguish, same as
+    /// the spsc contract.
+    pub fn drain(&mut self, max: usize, mut f: impl FnMut(T)) -> usize {
+        let n = self.shards.len();
+        let mut count = 0usize;
+        for _ in 0..n {
+            if count >= max {
+                break;
+            }
+            let want = max - count;
+            let took = self.shards[self.cursor].drain(want, &mut f);
+            count += took;
+            if took == want {
+                // `max` was reached mid-shard: hold the cursor here so the
+                // next call continues this shard — same sticky-cursor rule
+                // as `try_recv`.
+                break;
+            }
+            self.advance();
+        }
+        count
+    }
+
+    /// Pop, blocking per the channel's wait strategy while every shard is
+    /// empty. Fails only when all senders are gone and every shard is
+    /// drained.
+    ///
+    /// The wait is self-waking (the constructor rejects `Park`): between
+    /// sweeps the consumer spins, or climbs the `Backoff`/`BackoffYield`
+    /// ladder, and re-checks — no shard ever needs to notify it.
+    pub fn recv(&mut self) -> Result<T, crate::RecvError> {
+        use crate::wait::Idle;
+        let mut idle = Idle::for_strategy(self.strategy);
+        loop {
+            match self.try_recv() {
+                Ok(v) => return Ok(v),
+                Err(TryRecvError::Disconnected) => return Err(crate::RecvError),
+                Err(TryRecvError::Empty) => match self.strategy {
+                    WaitStrategy::BusySpin => std::hint::spin_loop(),
+                    WaitStrategy::Backoff | WaitStrategy::BackoffYield => idle.idle(),
+                    // The constructor rejects Park.
+                    WaitStrategy::Park => unreachable!(),
+                },
+            }
+        }
+    }
+
     /// Move to the next shard, resetting the visit budget. Compare-and-reset
     /// rather than `%`, so no division enters the hot path.
     fn advance(&mut self) {
@@ -195,9 +270,56 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "only supports WaitStrategy::BusySpin")]
+    #[should_panic(expected = "does not support WaitStrategy::Park")]
     fn rejects_park_strategy() {
         let _ = channel::<u64>(2, 1024, WaitStrategy::Park);
+    }
+
+    #[test]
+    fn accepts_every_self_waking_strategy() {
+        for strategy in [
+            WaitStrategy::BusySpin,
+            WaitStrategy::Backoff,
+            WaitStrategy::BackoffYield,
+        ] {
+            let (mut senders, mut rx) = channel::<u64>(2, 8, strategy);
+            senders[0].try_send(1).unwrap();
+            assert_eq!(rx.try_recv(), Ok(1));
+        }
+    }
+
+    #[test]
+    fn drain_sweeps_shards_and_respects_max() {
+        let (mut senders, mut rx) = channel::<u64>(2, 8, WaitStrategy::BusySpin);
+        for v in [1, 2, 3] {
+            senders[0].try_send(v).unwrap();
+        }
+        for v in [10, 20] {
+            senders[1].try_send(v).unwrap();
+        }
+        // max cuts mid-shard: 2 of shard 0's 3 items.
+        let mut got = Vec::new();
+        assert_eq!(rx.drain(2, |v| got.push(v)), 2);
+        assert_eq!(got, vec![1, 2]);
+        // Unbounded drain finishes shard 0 and sweeps shard 1.
+        got.clear();
+        assert_eq!(rx.drain(usize::MAX, |v| got.push(v)), 3);
+        assert_eq!(got, vec![3, 10, 20]);
+        assert_eq!(rx.drain(usize::MAX, |_| {}), 0, "empty channel drains 0");
+    }
+
+    #[test]
+    fn drain_returns_zero_after_disconnect_pair_with_try_recv() {
+        let (mut senders, mut rx) = channel::<u64>(2, 8, WaitStrategy::BusySpin);
+        senders[0].try_send(7).unwrap();
+        drop(senders);
+        // Remaining items still come out through drain...
+        let mut got = Vec::new();
+        assert_eq!(rx.drain(usize::MAX, |v| got.push(v)), 1);
+        assert_eq!(got, vec![7]);
+        // ...then drain reports 0, same as empty; try_recv disambiguates.
+        assert_eq!(rx.drain(usize::MAX, |_| {}), 0);
+        assert_eq!(rx.try_recv(), Err(TryRecvError::Disconnected));
     }
 
     #[test]

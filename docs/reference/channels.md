@@ -12,13 +12,15 @@ API reference is the rustdoc: `cargo doc --open`.
 | Consumers | exactly 1 | exactly 1 | exactly 1 |
 | Delivery order | FIFO | claim order across all producers (global FIFO) | per-producer FIFO only; cross-producer order is scan-position dependent |
 | Backpressure bound | `cap` items total | `cap` items total | `total_cap / n_shards` items **per producer** |
-| Blocking `send` / `recv` | yes | yes | no — `try_send` / `try_recv` only |
-| `drain` | yes | yes | no |
-| Wait strategies | all four | all four | `BusySpin` only (any other panics) |
+| Blocking `send` / `recv` | yes | yes | yes — `send` blocks on **this shard's** capacity; `recv` waits self-waking |
+| `drain` | yes | yes | yes — each shard visited at most once per call, head published once per shard |
+| Wait strategies | all four | all four | all but `Park` (panics: no cross-shard parker) |
 | Availability | always | always | feature `experimental-sharded` |
 
-`sharded` is a prototype: `BusySpin`-only, not a stable API
-(see the feature-flag note in `Cargo.toml`).
+`sharded` is a prototype and not a stable API (see the feature-flag note in
+`Cargo.toml`). It takes every wait strategy except `Park`: the self-waking
+three compose over independent rings for free, while `Park` would need a
+cross-shard parker that puts a fence + wake on every send.
 
 ## Capacity rules
 
