@@ -2039,12 +2039,170 @@ criterion_group!(
     backoff_isolation
 );
 
+// ---------------------------------------------------------------------------
+// The idle-shard wall: where a *dynamic* producer set would stop paying.
+//
+// `sharded` fixes its producer set at construction, which keeps the consumer's
+// O(n_shards) sweep a designed constant. A dynamic-registration variant would
+// make that sweep O(peak registered producers) instead — and a registered
+// producer that is merely idle still costs a probe on every sweep. `mpsc`'s
+// empty check is O(1) (one availability probe, src/mpsc.rs), and an idle
+// `mpsc` producer costs the consumer nothing at all.
+//
+// This group measures that crossover WITHOUT implementing dynamic producers:
+// a channel of `n_total` shards where only `n_active` senders ever send, with
+// the remaining `n_total - n_active` senders alive and empty, is exactly the
+// steady state of a dynamic channel holding `n_total` registrations of which
+// `n_active` are hot. The idle senders are held in the harness thread, so
+// thread count tracks `n_active`, not `n_total`.
+//
+// Cost model this is built to expose: the sticky cursor resets its visit
+// budget whenever a sweep steps over an empty shard, so one full n-shard scan
+// is amortized over each VISIT_BUDGET (32) run of items from a hot shard —
+// roughly n/32 empty ring probes per item delivered, each touching a
+// different ring's cache line.
+//
+// Deliberate deviation from this file's equal-total-capacity convention:
+// per-shard capacity is held at 64 while `n_total` grows, rather than holding
+// the total at 1024 and letting per-shard capacity collapse to 2 slots at
+// n=512. Holding the total would confound sweep cost with producer stalls,
+// and 2026-08-16-sharded-ladder-skew.md already measured that shard depth
+// does not move throughput while the consumer keeps up. The variable under
+// test here is the sweep, so the sweep is what varies.
+// ---------------------------------------------------------------------------
+
+fn sharded_idle_wall(c: &mut Criterion) {
+    use ultima_rings::sharded;
+    const PER_SHARD: usize = 64;
+    let mut g = c.benchmark_group("sharded_idle_wall");
+    g.throughput(Throughput::Elements(BATCH));
+
+    for n_total in [4usize, 8, 16, 32, 64, 128, 256, 512] {
+        for n_active in [1usize, 4] {
+            if n_active > n_total {
+                continue;
+            }
+            g.bench_function(format!("sharded_n{n_total}_a{n_active}"), |b| {
+                b.iter_custom(|iters| {
+                    let mut total = std::time::Duration::ZERO;
+                    for _ in 0..iters {
+                        let (mut senders, mut rx) = sharded::channel::<u64>(
+                            n_total,
+                            n_total * PER_SHARD,
+                            WaitStrategy::BusySpin,
+                        );
+                        // First `n_active` senders go to threads; the rest stay
+                        // alive and silent here, so their shards read Empty (not
+                        // Disconnected) for the whole run.
+                        let active: Vec<_> = senders.drain(..n_active).collect();
+                        let idle = senders;
+                        let barrier = Arc::new(Barrier::new(n_active + 1));
+                        let per = BATCH / n_active as u64;
+                        let mut handles = Vec::new();
+                        for mut tx in active {
+                            let barrier = Arc::clone(&barrier);
+                            handles.push(thread::spawn(move || {
+                                barrier.wait();
+                                for i in 0..per {
+                                    let mut v = i;
+                                    loop {
+                                        match tx.try_send(v) {
+                                            Ok(()) => break,
+                                            Err(TrySendError::Full(b)) => {
+                                                v = b;
+                                                std::hint::spin_loop();
+                                            }
+                                            Err(TrySendError::Disconnected(_)) => return,
+                                        }
+                                    }
+                                }
+                            }));
+                        }
+                        barrier.wait();
+                        let t = Instant::now();
+                        let target = per * n_active as u64;
+                        let mut got = 0u64;
+                        while got < target {
+                            match rx.try_recv() {
+                                Ok(_) => got += 1,
+                                Err(TryRecvError::Empty) => std::hint::spin_loop(),
+                                Err(TryRecvError::Disconnected) => break,
+                            }
+                        }
+                        total += t.elapsed();
+                        for h in handles {
+                            h.join().unwrap();
+                        }
+                        drop(idle);
+                    }
+                    total
+                })
+            });
+        }
+    }
+
+    // Baseline. An idle `mpsc` sender is a refcount and nothing else, so these
+    // cells have no n_total axis to sweep — that flatness is the comparison.
+    for n_active in [1usize, 4] {
+        g.bench_function(format!("mpsc_a{n_active}"), |b| {
+            b.iter_custom(|iters| {
+                let mut total = std::time::Duration::ZERO;
+                for _ in 0..iters {
+                    let (tx, mut rx) = mpsc::channel::<u64>(1024, WaitStrategy::BusySpin);
+                    let barrier = Arc::new(Barrier::new(n_active + 1));
+                    let per = BATCH / n_active as u64;
+                    let mut handles = Vec::new();
+                    for _ in 0..n_active {
+                        let mut tx = tx.clone();
+                        let barrier = Arc::clone(&barrier);
+                        handles.push(thread::spawn(move || {
+                            barrier.wait();
+                            for i in 0..per {
+                                let mut v = i;
+                                loop {
+                                    match tx.try_send(v) {
+                                        Ok(()) => break,
+                                        Err(TrySendError::Full(b)) => {
+                                            v = b;
+                                            std::hint::spin_loop();
+                                        }
+                                        Err(TrySendError::Disconnected(_)) => return,
+                                    }
+                                }
+                            }
+                        }));
+                    }
+                    drop(tx);
+                    barrier.wait();
+                    let t = Instant::now();
+                    let target = per * n_active as u64;
+                    let mut got = 0u64;
+                    while got < target {
+                        match rx.try_recv() {
+                            Ok(_) => got += 1,
+                            Err(TryRecvError::Empty) => std::hint::spin_loop(),
+                            Err(TryRecvError::Disconnected) => break,
+                        }
+                    }
+                    total += t.elapsed();
+                    for h in handles {
+                        h.join().unwrap();
+                    }
+                }
+                total
+            })
+        });
+    }
+    g.finish();
+}
+
 criterion_group!(
     bakeoff_sharded,
     bakeoff_sharded_mpsc,
     bakeoff_sharded_string,
     sharded_shard_ladder,
-    sharded_skew
+    sharded_skew,
+    sharded_idle_wall
 );
 
 criterion_main!(benches, bakeoff, bakeoff_sharded);

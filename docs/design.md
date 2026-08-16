@@ -891,6 +891,20 @@ workload fixes its producer set at startup, and `sharded` stabilized on
 exactly that shape (2026-08-16). Dynamic producers are out of scope by
 design; a caller who needs them wants `mpsc`.
 
+The scaling objection to ever revisiting that has now been measured rather
+than asserted. A dynamic producer set would make the consumer's sweep
+O(peak registered producers) instead of a designed constant, and an idle
+registration still costs a probe per sweep — so the fear was that a server
+holding many mostly-idle producers would fall behind `mpsc`, whose empty
+check is a single load. Measured, the idle shard costs 0.05 ns per item and
+the crossover does not arrive until roughly 700 registered producers with a
+single active one; at 512 registered and 1 active, `sharded` is still 1.24x
+ahead (`docs/bench-results/2026-08-16-idle-shard-wall.md`). The sweep is
+therefore not the obstacle it was argued to be. What remains unmeasured,
+because it cannot be simulated with a fixed set, is registration,
+reaping, and the "no more producers" refcount that a dynamic contract would
+have to import.
+
 #### Vyukov per-slot stamps and packed state words
 
 This is the shape of the array flavor of `crossbeam-channel`, and of `Core` in

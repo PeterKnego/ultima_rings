@@ -1,0 +1,112 @@
+=== bakeoff full ===
+### round=1 point=full
+sharded_idle_wall/sharded_n4_a1
+                        thrpt:  [127.41 Melem/s 127.68 Melem/s 127.95 Melem/s]
+sharded_idle_wall/sharded_n4_a4
+                        thrpt:  [126.00 Melem/s 127.00 Melem/s 127.97 Melem/s]
+sharded_idle_wall/sharded_n8_a1
+                        thrpt:  [105.37 Melem/s 106.09 Melem/s 107.04 Melem/s]
+sharded_idle_wall/sharded_n8_a4
+                        thrpt:  [121.91 Melem/s 123.00 Melem/s 124.20 Melem/s]
+sharded_idle_wall/sharded_n16_a1
+                        thrpt:  [115.49 Melem/s 115.65 Melem/s 115.80 Melem/s]
+sharded_idle_wall/sharded_n16_a4
+                        thrpt:  [117.84 Melem/s 118.70 Melem/s 119.57 Melem/s]
+sharded_idle_wall/sharded_n32_a1
+                        thrpt:  [105.46 Melem/s 106.01 Melem/s 106.63 Melem/s]
+sharded_idle_wall/sharded_n32_a4
+                        thrpt:  [115.32 Melem/s 116.82 Melem/s 118.46 Melem/s]
+sharded_idle_wall/sharded_n64_a1
+                        thrpt:  [102.74 Melem/s 102.86 Melem/s 102.96 Melem/s]
+sharded_idle_wall/sharded_n64_a4
+                        thrpt:  [113.71 Melem/s 115.24 Melem/s 116.65 Melem/s]
+sharded_idle_wall/sharded_n128_a1
+                        thrpt:  [75.069 Melem/s 75.125 Melem/s 75.181 Melem/s]
+sharded_idle_wall/sharded_n128_a4
+                        thrpt:  [103.89 Melem/s 104.99 Melem/s 106.07 Melem/s]
+sharded_idle_wall/sharded_n256_a1
+                        thrpt:  [52.010 Melem/s 52.099 Melem/s 52.191 Melem/s]
+sharded_idle_wall/sharded_n256_a4
+                        thrpt:  [85.981 Melem/s 86.488 Melem/s 86.999 Melem/s]
+sharded_idle_wall/sharded_n512_a1
+                        thrpt:  [28.501 Melem/s 28.546 Melem/s 28.590 Melem/s]
+sharded_idle_wall/sharded_n512_a4
+                        thrpt:  [63.444 Melem/s 63.622 Melem/s 63.799 Melem/s]
+sharded_idle_wall/mpsc_a1
+                        thrpt:  [22.171 Melem/s 22.193 Melem/s 22.215 Melem/s]
+sharded_idle_wall/mpsc_a4
+                        thrpt:  [17.096 Melem/s 17.140 Melem/s 17.182 Melem/s]
+### round=2 point=full
+sharded_idle_wall/sharded_n4_a1
+                        thrpt:  [111.09 Melem/s 111.22 Melem/s 111.34 Melem/s]
+sharded_idle_wall/sharded_n4_a4
+                        thrpt:  [108.19 Melem/s 109.91 Melem/s 111.74 Melem/s]
+sharded_idle_wall/sharded_n8_a1
+                        thrpt:  [96.687 Melem/s 96.838 Melem/s 96.994 Melem/s]
+sharded_idle_wall/sharded_n8_a4
+                        thrpt:  [104.89 Melem/s 105.41 Melem/s 105.90 Melem/s]
+sharded_idle_wall/sharded_n16_a1
+                        thrpt:  [82.738 Melem/s 82.977 Melem/s 83.226 Melem/s]
+sharded_idle_wall/sharded_n16_a4
+                        thrpt:  [104.15 Melem/s 105.22 Melem/s 106.22 Melem/s]
+sharded_idle_wall/sharded_n32_a1
+                        thrpt:  [91.864 Melem/s 92.050 Melem/s 92.234 Melem/s]
+sharded_idle_wall/sharded_n32_a4
+                        thrpt:  [110.01 Melem/s 110.43 Melem/s 110.86 Melem/s]
+sharded_idle_wall/sharded_n64_a1
+                        thrpt:  [83.071 Melem/s 83.268 Melem/s 83.465 Melem/s]
+sharded_idle_wall/sharded_n64_a4
+                        thrpt:  [105.60 Melem/s 106.22 Melem/s 106.91 Melem/s]
+sharded_idle_wall/sharded_n128_a1
+                        thrpt:  [66.690 Melem/s 67.144 Melem/s 67.434 Melem/s]
+sharded_idle_wall/sharded_n128_a4
+                        thrpt:  [95.252 Melem/s 95.561 Melem/s 95.924 Melem/s]
+sharded_idle_wall/sharded_n256_a1
+                        thrpt:  [47.845 Melem/s 48.016 Melem/s 48.188 Melem/s]
+sharded_idle_wall/sharded_n256_a4
+                        thrpt:  [81.797 Melem/s 82.505 Melem/s 83.239 Melem/s]
+sharded_idle_wall/sharded_n512_a1
+                        thrpt:  [26.044 Melem/s 26.189 Melem/s 26.337 Melem/s]
+sharded_idle_wall/sharded_n512_a4
+                        thrpt:  [59.155 Melem/s 59.318 Melem/s 59.480 Melem/s]
+sharded_idle_wall/mpsc_a1
+                        thrpt:  [22.676 Melem/s 22.716 Melem/s 22.757 Melem/s]
+sharded_idle_wall/mpsc_a4
+                        thrpt:  [15.042 Melem/s 15.112 Melem/s 15.183 Melem/s]
+### round=3 point=full
+sharded_idle_wall/sharded_n4_a1
+                        thrpt:  [107.79 Melem/s 108.19 Melem/s 108.63 Melem/s]
+sharded_idle_wall/sharded_n4_a4
+                        thrpt:  [112.78 Melem/s 114.00 Melem/s 115.34 Melem/s]
+sharded_idle_wall/sharded_n8_a1
+                        thrpt:  [83.511 Melem/s 83.795 Melem/s 84.077 Melem/s]
+sharded_idle_wall/sharded_n8_a4
+                        thrpt:  [106.32 Melem/s 107.06 Melem/s 107.86 Melem/s]
+sharded_idle_wall/sharded_n16_a1
+                        thrpt:  [100.31 Melem/s 100.47 Melem/s 100.62 Melem/s]
+sharded_idle_wall/sharded_n16_a4
+                        thrpt:  [109.88 Melem/s 111.27 Melem/s 112.74 Melem/s]
+sharded_idle_wall/sharded_n32_a1
+                        thrpt:  [94.013 Melem/s 94.148 Melem/s 94.281 Melem/s]
+sharded_idle_wall/sharded_n32_a4
+                        thrpt:  [110.36 Melem/s 112.05 Melem/s 113.62 Melem/s]
+sharded_idle_wall/sharded_n64_a1
+                        thrpt:  [75.281 Melem/s 75.368 Melem/s 75.457 Melem/s]
+sharded_idle_wall/sharded_n64_a4
+                        thrpt:  [102.82 Melem/s 104.64 Melem/s 106.32 Melem/s]
+sharded_idle_wall/sharded_n128_a1
+                        thrpt:  [61.369 Melem/s 61.459 Melem/s 61.551 Melem/s]
+sharded_idle_wall/sharded_n128_a4
+                        thrpt:  [100.34 Melem/s 101.67 Melem/s 102.81 Melem/s]
+sharded_idle_wall/sharded_n256_a1
+                        thrpt:  [51.686 Melem/s 51.731 Melem/s 51.777 Melem/s]
+sharded_idle_wall/sharded_n256_a4
+                        thrpt:  [81.037 Melem/s 81.524 Melem/s 82.115 Melem/s]
+sharded_idle_wall/sharded_n512_a1
+                        thrpt:  [27.593 Melem/s 27.618 Melem/s 27.643 Melem/s]
+sharded_idle_wall/sharded_n512_a4
+                        thrpt:  [59.957 Melem/s 60.238 Melem/s 60.551 Melem/s]
+sharded_idle_wall/mpsc_a1
+                        thrpt:  [21.974 Melem/s 22.033 Melem/s 22.097 Melem/s]
+sharded_idle_wall/mpsc_a4
+                        thrpt:  [15.084 Melem/s 15.160 Melem/s 15.236 Melem/s]
